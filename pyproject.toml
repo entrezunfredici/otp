@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odoo_task_porter"
+version = "0.1.0"
+description = "Import/export Odoo tasks to Markdown via XML-RPC"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Odoo Task Porter"}
+]
+dependencies = [
+  "keyring>=24.0",
+  "python-dotenv>=1.0",
+]
+
+[project.scripts]
+odoo-task-porter = "odoo_task_porter.cli:main"
+
+[tool.setuptools]
+packages = ["odoo_task_porter"]
+
+[tool.setuptools.package-data]
+odoo_task_porter = ["py.typed"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
