@@ -1,7 +1,8 @@
-# {{TITLE}}
+﻿# {{TITLE}}
 
 ## Métadonnées
-- Type: {{TYPE}}
+
+- Type: dev
 - Statut: {{STATUT}}
 - Priorité: {{PRIORITE}}
 - MoSCoW: {{MOSCOW}}
@@ -11,8 +12,6 @@
 - Liens: {{LIENS}}
 
 ## Description
+
 {{DESCRIPTION}}
 
-## Dépendances & risques
-Dépendances:
-- (Bloquante) ...

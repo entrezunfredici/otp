@@ -115,7 +115,7 @@ class ExportService:
 
     @staticmethod
     def _normalize_moscow(value: str) -> str:
-        mapping = {"must": "Must", "should": "Should", "could": "Could", "wont": "Won’t"}
+        mapping = {"must": "Must", "should": "Should", "could": "Could", "wont": "Won't"}
         return mapping.get(value.lower(), "Must")
 
     @staticmethod

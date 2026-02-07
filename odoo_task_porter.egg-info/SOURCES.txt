@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+requirements.txt
+odoo_task_porter/__init__.py
+odoo_task_porter/cli.py
+odoo_task_porter/py.typed
+odoo_task_porter.egg-info/PKG-INFO
+odoo_task_porter.egg-info/SOURCES.txt
+odoo_task_porter.egg-info/dependency_links.txt
+odoo_task_porter.egg-info/entry_points.txt
+odoo_task_porter.egg-info/requires.txt
+odoo_task_porter.egg-info/top_level.txt
+tests/test_markdown_parsing.py
+tests/test_validation.py

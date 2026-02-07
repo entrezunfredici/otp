@@ -2,7 +2,7 @@
 
 ## Métadonnées
 
-- Type: ux-ui
+- Type: qa
 - Statut: {{STATUT}}
 - Priorité: {{PRIORITE}}
 - MoSCoW: {{MOSCOW}}

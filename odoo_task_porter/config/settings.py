@@ -81,6 +81,45 @@ def init_config(path: Path | None = None) -> Path:
     return config_path
 
 
+def upsert_profile(
+    profile_name: str,
+    url: str,
+    db: str,
+    username: str,
+    path: Path | None = None,
+) -> Path:
+    """Create or update a profile in the configuration file."""
+    config_path = path or DEFAULT_CONFIG_PATH
+    payload = _load_or_default_payload(config_path)
+    profiles = payload.setdefault("profiles", {})
+    profiles[profile_name] = {"url": url, "db": db, "username": username}
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(_render_toml(payload), encoding="utf-8")
+    return config_path
+
+
+def list_profile_names(path: Path | None = None) -> list[str]:
+    """List configured profile names."""
+    config_path = path or DEFAULT_CONFIG_PATH
+    payload = _load_or_default_payload(config_path)
+    profiles = payload.get("profiles", {})
+    return sorted(profiles.keys())
+
+
+def _load_or_default_payload(config_path: Path) -> dict[str, Any]:
+    """Load current config payload or create a default structure."""
+    if config_path.exists():
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
+    return {
+        "paths": {
+            "templates_empty_dir": "templates/empty",
+            "tasks_md_dir": "tasks_md",
+            "export_out_dir": "exported",
+        },
+        "profiles": {},
+    }
+
+
 def _render_toml(payload: dict[str, Any]) -> str:
     """Render a minimal TOML string from nested dictionaries."""
     lines: list[str] = []

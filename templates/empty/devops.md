@@ -2,7 +2,7 @@
 
 ## Métadonnées
 
-- Type: ux-ui
+- Type: devops
 - Statut: {{STATUT}}
 - Priorité: {{PRIORITE}}
 - MoSCoW: {{MOSCOW}}

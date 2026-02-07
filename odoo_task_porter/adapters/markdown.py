@@ -11,14 +11,17 @@ from odoo_task_porter.domain.errors import ValidationError
 from odoo_task_porter.domain.models import ParsedMarkdown, TaskMetadata
 from odoo_task_porter.rules.validate import require_fields, validate_metadata
 
-META_SECTION_HEADER = "## Métadonnées"
-DEPENDENCIES_HEADER = "## Dépendances & risques"
+META_SECTION_HEADERS = {"## Métadonnées", "## MÃ©tadonnÃ©es"}
+DEPENDENCIES_HEADERS = {"## Dépendances & risques", "## DÃ©pendances & risques"}
+DEPENDENCIES_LABELS = ("Dépendances", "DÃ©pendances")
 
 META_FIELD_MAP = {
     "id": "id",
     "type": "type",
     "statut": "statut",
-    "priorité": "priorité",
+    "priorité": "priority",
+    "prioritã©": "priority",
+    "prioritÃ©": "priority",
     "moscow": "moscow",
     "estimation": "estimation",
     "owner": "owner",
@@ -39,15 +42,16 @@ def parse_markdown(path: Path) -> ParsedMarkdown:
     """Parse markdown file into structured data."""
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
-    if not lines or not lines[0].startswith("# "):
+    first_line = lines[0].lstrip("\ufeff") if lines else ""
+    if not lines or not first_line.startswith("# "):
         raise ValidationError("Le fichier doit commencer par un titre '#'.")
-    title = lines[0].lstrip("# ").strip()
+    title = first_line.lstrip("# ").strip()
     metadata_values = _extract_metadata(lines)
-    require_fields(metadata_values, ["type", "statut", "priorité", "moscow", "estimation"])
+    require_fields(metadata_values, ["type", "statut", "priority", "moscow", "estimation"])
     task_metadata = TaskMetadata(
         task_type=metadata_values.get("type", ""),
         status=metadata_values.get("statut", ""),
-        priority=metadata_values.get("priorité", ""),
+        priority=metadata_values.get("priority", ""),
         moscow=metadata_values.get("moscow", ""),
         estimation=metadata_values.get("estimation", ""),
         owner=metadata_values.get("owner"),
@@ -92,9 +96,14 @@ def load_template(path: Path) -> MarkdownTemplate:
 
 
 def _extract_metadata(lines: list[str]) -> dict[str, str]:
-    if META_SECTION_HEADER not in lines:
+    start_index: int | None = None
+    for index, line in enumerate(lines):
+        if line in META_SECTION_HEADERS:
+            start_index = index + 1
+            break
+    if start_index is None:
         raise ValidationError("Section '## Métadonnées' manquante.")
-    start_index = lines.index(META_SECTION_HEADER) + 1
+
     values: dict[str, str] = {}
     for line in lines[start_index:]:
         if line.startswith("## "):
@@ -109,7 +118,7 @@ def _extract_metadata(lines: list[str]) -> dict[str, str]:
             if mapped:
                 if mapped == "id":
                     continue
-                values[mapped] = value.strip()
+                values[mapped] = _sanitize_metadata_value(mapped, value.strip())
     return values
 
 
@@ -120,10 +129,10 @@ def _extract_body(lines: list[str]) -> tuple[str, list[str], list[str]]:
     dependencies_blocking: list[str] = []
     dependencies_other: list[str] = []
     for line in lines[1:]:
-        if line.startswith(META_SECTION_HEADER):
+        if line in META_SECTION_HEADERS:
             skip = True
             continue
-        if skip and line.startswith("## ") and line != META_SECTION_HEADER:
+        if skip and line.startswith("## ") and line not in META_SECTION_HEADERS:
             skip = False
         if skip:
             continue
@@ -136,27 +145,41 @@ def _extract_body(lines: list[str]) -> tuple[str, list[str], list[str]]:
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
-    return date.fromisoformat(value)
+    if value.strip().upper() == "YYYY-MM-DD":
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise ValidationError(f"Deadline invalide: {value}") from error
 
 
 def _parse_links(value: str) -> list[str]:
     if not value:
+        return []
+    stripped = value.strip()
+    if stripped.startswith("(") and stripped.endswith(")"):
         return []
     parts = [item.strip() for item in value.split(",") if item.strip()]
     return parts
 
 
 def _parse_dependencies(lines: Iterable[str]) -> tuple[list[str], list[str]]:
-    if DEPENDENCIES_HEADER not in lines:
+    line_list = list(lines)
+    dep_index: int | None = None
+    for index, line in enumerate(line_list):
+        if line in DEPENDENCIES_HEADERS:
+            dep_index = index + 1
+            break
+    if dep_index is None:
         return [], []
-    start = list(lines).index(DEPENDENCIES_HEADER) + 1
+
     blocking: list[str] = []
     other: list[str] = []
     in_dependencies = False
-    for line in list(lines)[start:]:
+    for line in line_list[dep_index:]:
         if line.startswith("## "):
             break
-        if line.strip().startswith("Dépendances"):
+        if any(line.strip().startswith(label) for label in DEPENDENCIES_LABELS):
             in_dependencies = True
             continue
         if not in_dependencies:
@@ -168,3 +191,21 @@ def _parse_dependencies(lines: Iterable[str]) -> tuple[list[str], list[str]]:
             else:
                 other.append(content)
     return blocking, other
+
+
+def _sanitize_metadata_value(field: str, value: str) -> str:
+    if not value:
+        return value
+    if "|" in value:
+        value = value.split("|", 1)[0].strip()
+    if field == "estimation" and "/" in value:
+        value = value.split("/", 1)[0].strip()
+    if field == "owner" and value == "@":
+        return ""
+    if field == "deadline" and value.upper() == "YYYY-MM-DD":
+        return ""
+    if field == "liens" and value.startswith("(") and value.endswith(")"):
+        return ""
+    if field == "moscow":
+        value = value.replace("Won''t", "Won't").replace("Wonâ€™t", "Won't")
+    return value

@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from odoo_task_porter.adapters.odoo_xmlrpc import OdooClient
+from odoo_task_porter.adapters.odoo_backend import OdooBackend
 from odoo_task_porter.domain.errors import OdooError
 from odoo_task_porter.transform.mapping import STATUS_TO_STAGE
 
@@ -13,7 +13,7 @@ from odoo_task_porter.transform.mapping import STATUS_TO_STAGE
 class OdooRepository:
     """Higher-level Odoo repository operations."""
 
-    client: OdooClient
+    client: OdooBackend
 
     def get_project_id(self, project_name: str) -> int:
         results = self.client.search_read(

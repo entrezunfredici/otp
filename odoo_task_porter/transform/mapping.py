@@ -7,7 +7,7 @@ from typing import Dict
 ALLOWED_TYPES = {"dev", "ux-ui", "devops", "infra", "qa", "sec", "doc", "produit", "research"}
 ALLOWED_STATUSES = {"backlog", "todo", "in_progress", "review", "blocked", "done"}
 ALLOWED_PRIORITIES = {"P0", "P1", "P2", "P3"}
-ALLOWED_MOSCOW = {"Must", "Should", "Could", "Won’t", "Won't", "Wont"}
+ALLOWED_MOSCOW = {"Must", "Should", "Could", "Won't", "Won’t", "Wonâ€™t", "Wont"}
 
 STATUS_TO_STAGE = {
     "backlog": "Backlog",

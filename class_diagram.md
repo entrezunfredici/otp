@@ -2,199 +2,159 @@
 classDiagram
 direction LR
 
-%% =========================
-%% DOMAIN (canonical model)
-%% =========================
-class TaskSpec {
-  +str key
-  +str title
-  +str type
+class PorterError
+class ValidationError
+class OdooError
+PorterError <|-- ValidationError
+PorterError <|-- OdooError
+
+class TaskMetadata {
+  +str task_type
   +str status
   +str priority
   +str moscow
-  +str estimate
-  +float planned_hours
-  +str owner
-  +date deadline
+  +str estimation
+  +str? owner
+  +date? deadline
   +list~str~ links
-  +list~DependencySpec~ dependencies
-  +str body_md
-  +str source_path
 }
 
-class DependencySpec {
-  +str kind  %% blocking|non_blocking|external
-  +str ref
+class ParsedMarkdown {
   +str title
-  +str owner
-  +str expected
-  +str raw
-}
-
-class ProfileSpec {
-  +str profile
-  +str url
-  +str db
-  +str user
-  +str default_project
-}
-
-class Report {
-  +int created
-  +int updated
-  +int skipped
-  +int errors
-  +list~ReportItem~ items
-  +to_json(path)
+  +TaskMetadata metadata
+  +str description
+  +str raw_body
+  +Path source_path
+  +list~str~ dependencies_blocking
+  +list~str~ dependencies_other
 }
 
 class ReportItem {
-  +str key
-  +str action  %% created|updated|skipped|error
+  +str source
+  +str status
   +str message
+  +dict data
+}
+
+class Report {
+  +list~ReportItem~ items
   +list~str~ warnings
-  +int odoo_id
+  +add_item(source, status, message, **data)
+  +add_warning(warning)
+  +to_dict()
 }
 
-TaskSpec "1" o-- "*" DependencySpec : dependencies
-Report "1" o-- "*" ReportItem : items
+Report "1" *-- "*" ReportItem
+ParsedMarkdown "1" *-- "1" TaskMetadata
 
-%% =========================
-%% PORTS / INTERFACES
-%% =========================
-class TaskReader {
-  <<interface>>
-  +read(path) list~TaskSpec~
-}
-
-class TaskWriter {
-  <<interface>>
-  +write(path, tasks) void
-}
-
-class TaskStore {
-  <<interface>>
-  +upsert(tasks, project, dry_run) Report
-  +fetch(project, filters) list~TaskSpec~
-}
-
-class AuthProvider {
-  <<interface>>
-  +set(profile, username, secret) void
-  +get(profile, username) str
-  +unset(profile, username) void
-  +test(profile, profileSpec) bool
-}
-
-%% =========================
-%% ADAPTERS (Markdown/JSON)
-%% =========================
-class MarkdownTaskAdapter {
-  +read(path) list~TaskSpec~
-  +write(path, tasks) void
-  +parse_metadata(md) dict
-  +build_markdown(task, template_path) str
-}
-
-class JsonTaskAdapter {
-  +read(path) list~TaskSpec~
-  +write(path, tasks) void
-}
-
-TaskReader <|.. MarkdownTaskAdapter
-TaskWriter <|.. MarkdownTaskAdapter
-TaskReader <|.. JsonTaskAdapter
-TaskWriter <|.. JsonTaskAdapter
-
-%% =========================
-%% AUTH (Keyring)
-%% =========================
-class KeyringAuthProvider {
-  +set(profile, username, secret) void
-  +get(profile, username) str
-  +unset(profile, username) void
-  +test(profile, profileSpec) bool
-}
-
-AuthProvider <|.. KeyringAuthProvider
-
-%% =========================
-%% ODOO INFRA
-%% =========================
-class OdooXmlRpcClient {
+class OdooClient {
   +str url
   +str db
-  +str user
-  +str secret
+  +str username
+  +str password
   +int uid
   +authenticate() int
-  +execute(model, method, args, kwargs) any
+  +execute(model, method, *args, **kwargs)
+  +search_read(model, domain, fields)
+  +create(model, values) int
+  +write(model, ids, values) bool
+  +fields_get(model, fields)
 }
 
-class OdooTaskRepository {
-  -OdooXmlRpcClient client
-  +get_or_create_project(name) int
+class OdooRepository {
+  +OdooClient client
+  +get_project_id(project_name) int
+  +find_task_by_import_key(project_id, import_key)
+  +upsert_task(project_id, values, import_key) int
   +get_or_create_tag(name) int
-  +get_or_create_stage(project_id, stage_name) int
-  +find_user(owner_str) int?
-  +find_task_by_import_key(project_id, import_key) int?
-  +create_task(vals) int
-  +update_task(task_id, vals) void
-  +fetch_tasks(project_id, filters) list~dict~
+  +get_or_create_stage(project_id, status) int
+  +find_user(owner) int?
+  +find_tasks(domain, fields)
 }
 
-class OdooTaskStore {
-  -OdooTaskRepository repo
-  +upsert(tasks, project, dry_run) Report
-  +fetch(project, filters) list~TaskSpec~
-  +map_to_vals(task, project_id) dict
-  +map_from_record(record) TaskSpec
+OdooRepository "1" *-- "1" OdooClient
+OdooClient ..> OdooError
+OdooRepository ..> OdooError
+
+class TagMapping {
+  +str type_prefix
+  +str priority_prefix
+  +str moscow_prefix
 }
 
-TaskStore <|.. OdooTaskStore
-OdooTaskRepository o-- OdooXmlRpcClient : uses
-OdooTaskStore o-- OdooTaskRepository : uses
+class ImportOptions {
+  +bool dry_run
+  +bool create_only
+}
 
-%% =========================
-%% SERVICES (use-cases)
-%% =========================
 class ImportService {
-  -TaskReader reader
-  -TaskStore store
-  +run(tasks_md_dir, project, dry_run) Report
+  +OdooRepository repo
+  +TagMapping tag_mapping
+  +run(tasks_md_dir, project_name, options) Report
+}
+ImportService --> OdooRepository
+ImportService --> TagMapping
+ImportService --> ImportOptions
+ImportService --> Report
+ImportService ..> ParsedMarkdown
+
+class ExportOptions {
+  +str? stage
+  +str? tag
+  +str? domain
 }
 
 class ExportService {
-  -TaskWriter writer
-  -TaskStore store
-  +run(export_out_dir, project, filters) Report
+  +OdooRepository repo
+  +run(export_out_dir, project_name, templates_empty_dir, options) Report
 }
+ExportService --> OdooRepository
+ExportService --> ExportOptions
+ExportService --> Report
+ExportService ..> TaskMetadata
 
 class LintService {
-  -TaskReader reader
   +run(tasks_md_dir) Report
 }
+LintService --> Report
+LintService ..> ParsedMarkdown
 
-ImportService o-- TaskReader : reads
-ImportService o-- TaskStore : upserts
-ExportService o-- TaskStore : fetches
-ExportService o-- TaskWriter : writes
-LintService o-- TaskReader : reads
+class MarkdownTemplate {
+  +str name
+  +str content
+}
+class AuthResult {
+  +str username
+  +str password
+  +str source
+}
+class AuthManager {
+  +set(profile, username)
+  +get(profile, username) AuthResult
+  +unset(profile, username)
+  +test(profile, username) AuthResult
+}
+AuthManager --> AuthResult
 
-%% =========================
-%% OPTIONAL: RULES/MAPPING (functions or classes)
-%% =========================
-class TaskValidator {
-  +validate(tasks) Report
+class ProfileConfig {
+  +str name
+  +str url
+  +str db
+  +str username
+}
+class AppConfig {
+  +dict~str, ProfileConfig~ profiles
+  +Path templates_empty_dir
+  +Path tasks_md_dir
+  +Path export_out_dir
+}
+AppConfig "1" *-- "*" ProfileConfig
+
+class PathsConfig {
+  +Path templates_empty_dir
+  +Path tasks_md_dir
+  +Path export_out_dir
+  +ensure_dirs()
 }
 
-class TaskNormalizer {
-  +normalize(task) TaskSpec
-  +estimate_to_hours(estimate) float
-  +tags_for(task) list~str~
-}
-
-ImportService ..> TaskValidator : validates
-ImportService ..> TaskNormalizer : normalizes
-OdooTaskStore ..> TaskNormalizer : uses hours/tags
 ```

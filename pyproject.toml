@@ -12,16 +12,16 @@ license = {text = "MIT"}
 authors = [
   {name = "Odoo Task Porter"}
 ]
-dependencies = [
-  "keyring>=24.0",
-  "python-dotenv>=1.0",
-]
+dynamic = ["dependencies"]
 
 [project.scripts]
 odoo-task-porter = "odoo_task_porter.cli:main"
 
 [tool.setuptools]
 packages = ["odoo_task_porter"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.package-data]
 odoo_task_porter = ["py.typed"]

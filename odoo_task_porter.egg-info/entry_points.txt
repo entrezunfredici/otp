@@ -1,0 +1,2 @@
+[console_scripts]
+odoo-task-porter = odoo_task_porter.cli:main

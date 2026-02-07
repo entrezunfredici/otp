@@ -22,7 +22,7 @@ class ImportOptions:
     create_only: bool = False
 
 
-class ImportService:
+class ImportService():
     """Import tasks from Markdown into Odoo."""
 
     def __init__(self, repo: OdooRepository, tag_mapping: TagMapping | None = None) -> None:
