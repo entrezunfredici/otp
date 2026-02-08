@@ -5,71 +5,69 @@ import argparse
 from pathlib import Path
 
 from odoo_task_porter.cli.base_command import BaseCommand, CommandHelper
-from odoo_task_porter.cli.inquirer_helper import can_prompt_interactively, prompt_text
 from odoo_task_porter.config.settings import (
     DEFAULT_CONFIG_PATH,
     init_config,
-    list_profile_names,
-    upsert_profile,
+    load_config,
+    upsert_paths,
 )
 
 
 class ConfigCommand(BaseCommand):
     name = "config"
-    summary = "Initialiser ou gerer la configuration."
+    summary = "Initialiser ou gerer les chemins de configuration."
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
         config_sub = parser.add_subparsers(dest="config_cmd", required=True)
         init_parser = config_sub.add_parser("init", help="Creer un fichier de configuration.")
         init_parser.add_argument("--path", type=Path, default=DEFAULT_CONFIG_PATH)
-        profile_parser = config_sub.add_parser(
-            "profile",
-            help="Gerer les profils utilisateurs.",
+        paths_parser = config_sub.add_parser(
+            "paths",
+            help="Gerer les chemins de travail.",
         )
-        profile_sub = profile_parser.add_subparsers(dest="profile_cmd", required=True)
-        set_parser = profile_sub.add_parser(
+        paths_sub = paths_parser.add_subparsers(dest="paths_cmd", required=True)
+        set_parser = paths_sub.add_parser(
             "set",
-            help="Creer ou mettre a jour un profil.",
+            help="Mettre a jour les chemins de la configuration.",
         )
-        set_parser.add_argument("--name")
-        set_parser.add_argument("--url")
-        set_parser.add_argument("--db")
-        set_parser.add_argument("--username")
-        set_parser.add_argument(
-            "--interactive",
-            action="store_true",
-            help="Demande les champs manquants en mode interactif.",
-        )
-        profile_sub.add_parser(
-            "list",
-            help="Lister les profils configures.",
-        )
+        set_parser.add_argument("--templates-empty-dir", type=Path)
+        set_parser.add_argument("--tasks-md-dir", type=Path)
+        set_parser.add_argument("--export-out-dir", type=Path)
+        paths_sub.add_parser("show", help="Afficher les chemins configures.")
 
     def execute(self, args: argparse.Namespace) -> int:
-        if args.config_cmd != "init":
-            if args.config_cmd == "profile" and args.profile_cmd == "set":
-                name, url, db, username = self._resolve_profile_input(args)
-                path = upsert_profile(
-                    profile_name=name,
-                    url=url,
-                    db=db,
-                    username=username,
-                    path=args.config,
+        if args.config_cmd == "init":
+            path = init_config(args.path)
+            print(f"Config initialized at {path}")
+            return 0
+
+        if args.config_cmd == "paths" and args.paths_cmd == "set":
+            if (
+                args.templates_empty_dir is None
+                and args.tasks_md_dir is None
+                and args.export_out_dir is None
+            ):
+                raise ValueError(
+                    "Aucun chemin fourni. Utilise au moins une option parmi "
+                    "--templates-empty-dir, --tasks-md-dir, --export-out-dir."
                 )
-                print(f"Profile '{name}' saved in {path}")
-                return 0
-            if args.config_cmd == "profile" and args.profile_cmd == "list":
-                profiles = list_profile_names(args.config)
-                if not profiles:
-                    print("No profiles configured.")
-                    return 0
-                for profile in profiles:
-                    print(profile)
-                return 0
-            return 1
-        path = init_config(args.path)
-        print(f"Config initialized at {path}")
-        return 0
+            path = upsert_paths(
+                templates_empty_dir=args.templates_empty_dir,
+                tasks_md_dir=args.tasks_md_dir,
+                export_out_dir=args.export_out_dir,
+                path=args.config,
+            )
+            print(f"Paths updated in {path}")
+            return 0
+
+        if args.config_cmd == "paths" and args.paths_cmd == "show":
+            config = load_config(args.config)
+            print(f"templates_empty_dir={config.templates_empty_dir}")
+            print(f"tasks_md_dir={config.tasks_md_dir}")
+            print(f"export_out_dir={config.export_out_dir}")
+            return 0
+
+        return 1
 
     def helper(self) -> CommandHelper:
         return CommandHelper(
@@ -77,47 +75,8 @@ class ConfigCommand(BaseCommand):
             summary=self.summary,
             usage=(
                 "odoo-task-porter config init [--path <config.toml>] | "
-                "odoo-task-porter config profile set [--name <name>] [--url <url>] "
-                "[--db <db>] [--username <user>] [--interactive] | "
-                "odoo-task-porter config profile list"
+                "odoo-task-porter config paths set [--templates-empty-dir <dir>] "
+                "[--tasks-md-dir <dir>] [--export-out-dir <dir>] | "
+                "odoo-task-porter config paths show"
             ),
-        )
-
-    def _resolve_profile_input(
-        self, args: argparse.Namespace
-    ) -> tuple[str, str, str, str]:
-        values = {
-            "name": args.name,
-            "url": args.url,
-            "db": args.db,
-            "username": args.username,
-        }
-        missing = [key for key, value in values.items() if not value]
-        if not missing:
-            return values["name"], values["url"], values["db"], values["username"]
-
-        if args.interactive or can_prompt_interactively():
-            try:
-                if not values["name"]:
-                    values["name"] = prompt_text("Nom du profil (ex: dev):")
-                if not values["url"]:
-                    values["url"] = prompt_text("URL Odoo (ex: https://odoo.example.com):")
-                if not values["db"]:
-                    values["db"] = prompt_text("Base de donnees (ex: odoo):")
-                if not values["username"]:
-                    values["username"] = prompt_text("Nom utilisateur (email):")
-            except ModuleNotFoundError as exc:
-                raise RuntimeError(
-                    "InquirerPy n'est pas installe. Lance 'pip install -e .' puis reessaie."
-                ) from exc
-
-            still_missing = [key for key, value in values.items() if not value]
-            if still_missing:
-                missing_text = ", ".join(still_missing)
-                raise ValueError(f"Champs manquants apres saisie interactive: {missing_text}")
-            return values["name"], values["url"], values["db"], values["username"]
-
-        missing_text = ", ".join(missing)
-        raise ValueError(
-            f"Champs manquants: {missing_text}. Passe les options ou utilise --interactive."
         )

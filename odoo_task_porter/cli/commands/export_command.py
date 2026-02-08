@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 from odoo_task_porter.cli.base_command import BaseCommand, CommandHelper
-from odoo_task_porter.cli.generic_functions import build_repository, load_app_config, require_profile
+from odoo_task_porter.cli.generic_functions import build_repository, load_app_config
 from odoo_task_porter.cli.reporting import emit_report
 from odoo_task_porter.services.export_service import ExportOptions, ExportService
 
@@ -26,8 +26,7 @@ class ExportCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace) -> int:
         config = load_app_config(args.config)
-        profile = require_profile(config, args.profile)
-        repo = build_repository(args.profile, profile)
+        repo = build_repository(args.profile)
         export_dir = args.export_out_dir or config.export_out_dir
         templates_dir = args.templates_empty_dir or config.templates_empty_dir
         options = ExportOptions(stage=args.stage, tag=args.tag, domain=args.domain)

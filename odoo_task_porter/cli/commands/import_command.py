@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 from odoo_task_porter.cli.base_command import BaseCommand, CommandHelper
-from odoo_task_porter.cli.generic_functions import build_repository, load_app_config, require_profile
+from odoo_task_porter.cli.generic_functions import build_repository, load_app_config
 from odoo_task_porter.cli.reporting import emit_report
 from odoo_task_porter.services.import_service import ImportOptions, ImportService
 
@@ -24,8 +24,7 @@ class ImportCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace) -> int:
         config = load_app_config(args.config)
-        profile = require_profile(config, args.profile)
-        repo = build_repository(args.profile, profile)
+        repo = build_repository(args.profile)
         tasks_dir = args.tasks_md_dir or config.tasks_md_dir
         options = ImportOptions(dry_run=args.dry_run, create_only=args.create_only)
         report = ImportService(repo).run(tasks_dir, args.project, options)

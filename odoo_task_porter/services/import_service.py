@@ -32,12 +32,32 @@ class ImportService():
     def run(self, tasks_md_dir: Path, project_name: str, options: ImportOptions | None = None) -> Report:
         options = options or ImportOptions()
         report = Report()
+        version = self.repo.get_server_major_version()
+        spec = self.repo.get_version_spec()
+        if version in (18, 19):
+            report.add_warning(f"Odoo version detectee: v{version}. Mapping: {spec.version_name}.")
+        elif version is not None:
+            report.add_warning(
+                f"Odoo version detectee: v{version}. Fallback mapping: {spec.version_name}."
+            )
+        else:
+            report.add_warning(
+                f"Version Odoo non detectee. Fallback mapping: {spec.version_name}."
+            )
         project_id = self.repo.get_project_id(project_name)
+        task_fields = self.repo.resolve_task_fields()
+        import_key_field = task_fields["import_key"]
         if not options.create_only:
-            self.repo.ensure_import_key_field()
-        fields = self.repo.fields("project.task", ["planned_hours", "date_deadline", "stage_id", "user_id"])
-        planned_hours_field = "planned_hours" if "planned_hours" in fields else None
-        deadline_field = "date_deadline" if "date_deadline" in fields else None
+            self.repo.ensure_import_key_field(import_key_field)
+        estimation_field = task_fields["estimation_hours"]
+        deadline_field = task_fields["deadline"]
+        owner_field = task_fields["owner"]
+        if estimation_field is None:
+            report.add_warning(
+                "Aucun champ d'estimation supporte detecte (planned_hours/allocated_hours)."
+            )
+        if owner_field is None:
+            report.add_warning("Aucun champ d'assignation detecte (user_id/user_ids).")
         dependency_field = self.repo.supports_dependency_field()
         for path in sorted(tasks_md_dir.glob("*.md")):
             try:
@@ -47,8 +67,10 @@ class ImportService():
                     parsed,
                     project_id,
                     import_key,
-                    planned_hours_field,
+                    task_fields,
+                    estimation_field,
                     deadline_field,
+                    owner_field,
                     dependency_field,
                 )
                 action = "update"
@@ -60,7 +82,13 @@ class ImportService():
                     continue
                 task_id = self.repo.upsert_task(project_id, values, import_key)
                 if parsed.dependencies_blocking:
-                    self._apply_dependencies(parsed.dependencies_blocking, dependency_field, task_id, report)
+                    self._apply_dependencies(
+                        parsed.dependencies_blocking,
+                        dependency_field,
+                        task_id,
+                        report,
+                        task_fields["name"],
+                    )
                 report.add_item(path.name, "ok", f"{action} task '{parsed.title}'.", task_id=task_id)
             except ValidationError as error:
                 report.add_item(path.name, "error", str(error))
@@ -73,8 +101,10 @@ class ImportService():
         parsed,
         project_id: int,
         import_key: str,
-        planned_hours_field: str | None,
+        task_fields: dict[str, str | None],
+        estimation_field: str | None,
         deadline_field: str | None,
+        owner_field: str | None,
         dependency_field: str | None,
     ) -> dict:
         tags = self._tags_for_metadata(parsed.metadata)
@@ -86,22 +116,25 @@ class ImportService():
                 description, parsed.dependencies_blocking if not dependency_field else [], parsed.dependencies_other
             )
         values = {
-            "name": parsed.title,
-            "description": description,
-            "project_id": project_id,
-            "tag_ids": [(6, 0, tag_ids)],
-            "stage_id": stage_id,
-            "x_import_key": import_key,
+            task_fields["name"]: parsed.title,
+            task_fields["description"]: description,
+            task_fields["project"]: project_id,
+            task_fields["tags"]: [(6, 0, tag_ids)],
+            task_fields["stage"]: stage_id,
         }
+        if task_fields["import_key"]:
+            values[task_fields["import_key"]] = import_key
         owner = parsed.metadata.owner
         if owner:
             owner_handle = owner.lstrip("@")
             user_id = self.repo.find_user(owner_handle)
-            if user_id:
+            if user_id and owner_field == "user_id":
                 values["user_id"] = user_id
+            elif user_id and owner_field == "user_ids":
+                values["user_ids"] = [(6, 0, [user_id])]
         hours = estimation_to_hours(parsed.metadata.estimation)
-        if planned_hours_field and hours is not None:
-            values[planned_hours_field] = hours
+        if estimation_field and hours is not None:
+            values[estimation_field] = hours
         if deadline_field and parsed.metadata.deadline:
             values[deadline_field] = parsed.metadata.deadline.isoformat()
         return values
@@ -127,15 +160,22 @@ class ImportService():
         field_name: str | None,
         task_id: int,
         report: Report,
+        task_name_field: str | None,
     ) -> None:
         dependency_ids: list[int] = []
         for dep in dependencies:
             task_name = self._extract_dependency_title(dep)
             if not task_name:
                 continue
-            matches = self.repo.find_tasks([["name", "ilike", task_name]], ["id", "name"])
+            if not task_name_field:
+                continue
+            resolved_fields = self.repo.resolve_task_fields()
+            matches = self.repo.find_tasks(
+                [[task_name_field, "ilike", task_name]],
+                [resolved_fields["id"], task_name_field],
+            )
             if matches:
-                dependency_ids.append(int(matches[0]["id"]))
+                dependency_ids.append(int(matches[0][resolved_fields["id"]]))
         if field_name and dependency_ids:
             self.repo.add_dependencies(task_id, dependency_ids, field_name)
         elif dependency_ids:

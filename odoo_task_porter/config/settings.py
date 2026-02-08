@@ -11,20 +11,9 @@ DEFAULT_CONFIG_PATH = Path.home() / ".config" / "odoo-task-porter" / "config.tom
 
 
 @dataclass(frozen=True)
-class ProfileConfig:
-    """Holds configuration for a single profile."""
-
-    name: str
-    url: str
-    db: str
-    username: str
-
-
-@dataclass(frozen=True)
 class AppConfig:
-    """Application configuration loaded from disk."""
+    """Application path configuration loaded from disk."""
 
-    profiles: dict[str, ProfileConfig]
     templates_empty_dir: Path
     tasks_md_dir: Path
     export_out_dir: Path
@@ -39,17 +28,7 @@ def load_config(path: Path | None = None) -> AppConfig:
         )
     data = tomllib.loads(config_path.read_text(encoding="utf-8"))
     paths = data.get("paths", {})
-    profiles_data = data.get("profiles", {})
-    profiles: dict[str, ProfileConfig] = {}
-    for name, payload in profiles_data.items():
-        profiles[name] = ProfileConfig(
-            name=name,
-            url=payload["url"],
-            db=payload["db"],
-            username=payload["username"],
-        )
     return AppConfig(
-        profiles=profiles,
         templates_empty_dir=Path(paths.get("templates_empty_dir", "templates/empty")),
         tasks_md_dir=Path(paths.get("tasks_md_dir", "tasks_md")),
         export_out_dir=Path(paths.get("export_out_dir", "exported")),
@@ -68,42 +47,31 @@ def init_config(path: Path | None = None) -> Path:
             "tasks_md_dir": "tasks_md",
             "export_out_dir": "exported",
         },
-        "profiles": {
-            "dev": {
-                "url": "https://odoo.example.com",
-                "db": "odoo",
-                "username": "user@example.com",
-            }
-        },
     }
     content = _render_toml(default_payload)
     config_path.write_text(content, encoding="utf-8")
     return config_path
 
 
-def upsert_profile(
-    profile_name: str,
-    url: str,
-    db: str,
-    username: str,
+def upsert_paths(
+    templates_empty_dir: Path | None = None,
+    tasks_md_dir: Path | None = None,
+    export_out_dir: Path | None = None,
     path: Path | None = None,
 ) -> Path:
-    """Create or update a profile in the configuration file."""
+    """Create or update path entries in the configuration file."""
     config_path = path or DEFAULT_CONFIG_PATH
     payload = _load_or_default_payload(config_path)
-    profiles = payload.setdefault("profiles", {})
-    profiles[profile_name] = {"url": url, "db": db, "username": username}
+    paths = payload.setdefault("paths", {})
+    if templates_empty_dir is not None:
+        paths["templates_empty_dir"] = str(templates_empty_dir)
+    if tasks_md_dir is not None:
+        paths["tasks_md_dir"] = str(tasks_md_dir)
+    if export_out_dir is not None:
+        paths["export_out_dir"] = str(export_out_dir)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(_render_toml(payload), encoding="utf-8")
     return config_path
-
-
-def list_profile_names(path: Path | None = None) -> list[str]:
-    """List configured profile names."""
-    config_path = path or DEFAULT_CONFIG_PATH
-    payload = _load_or_default_payload(config_path)
-    profiles = payload.get("profiles", {})
-    return sorted(profiles.keys())
 
 
 def _load_or_default_payload(config_path: Path) -> dict[str, Any]:
@@ -115,8 +83,7 @@ def _load_or_default_payload(config_path: Path) -> dict[str, Any]:
             "templates_empty_dir": "templates/empty",
             "tasks_md_dir": "tasks_md",
             "export_out_dir": "exported",
-        },
-        "profiles": {},
+        }
     }
 
 
@@ -130,11 +97,17 @@ def _render_toml(payload: dict[str, Any]) -> str:
             for key, sub_values in values.items():
                 lines.append(f"[{section}.{key}]")
                 for sub_key, sub_value in sub_values.items():
-                    lines.append(f"{sub_key} = \"{sub_value}\"")
+                    lines.append(f"{sub_key} = \"{_toml_escape(sub_value)}\"")
                 lines.append("")
         elif isinstance(values, dict):
             lines.append(f"[{section}]")
             for key, value in values.items():
-                lines.append(f"{key} = \"{value}\"")
+                lines.append(f"{key} = \"{_toml_escape(value)}\"")
             lines.append("")
     return "\n".join(lines).strip() + "\n"
+
+
+def _toml_escape(value: Any) -> str:
+    """Escape values when writing TOML basic strings."""
+    text = str(value)
+    return text.replace("\\", "\\\\").replace('"', '\\"')

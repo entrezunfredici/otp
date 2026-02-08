@@ -124,31 +124,26 @@ class MarkdownTemplate {
   +str content
 }
 class AuthResult {
+  +str url
+  +str db
   +str username
   +str password
   +str source
 }
 class AuthManager {
-  +set(profile, username)
-  +get(profile, username) AuthResult
-  +unset(profile, username)
-  +test(profile, username) AuthResult
+  +set(profile, username=None, url=None, db=None, password=None)
+  +get(profile, fallback_username=None, fallback_url=None, fallback_db=None) AuthResult
+  +unset(profile, username=None)
+  +test(profile, fallback_username=None, fallback_url=None, fallback_db=None) AuthResult
+  +list_profiles() list~str~
 }
 AuthManager --> AuthResult
 
-class ProfileConfig {
-  +str name
-  +str url
-  +str db
-  +str username
-}
 class AppConfig {
-  +dict~str, ProfileConfig~ profiles
   +Path templates_empty_dir
   +Path tasks_md_dir
   +Path export_out_dir
 }
-AppConfig "1" *-- "*" ProfileConfig
 
 class PathsConfig {
   +Path templates_empty_dir

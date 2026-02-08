@@ -18,3 +18,6 @@ class OdooBackend(Protocol):
 
     def fields_get(self, model: str, fields: list[str] | None = None) -> dict[str, Any]:
         ...
+
+    def get_server_major_version(self) -> int | None:
+        ...

@@ -7,8 +7,7 @@ from pathlib import Path
 
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.adapters.odoo_xmlrpc import OdooClient
-from odoo_task_porter.config.settings import AppConfig, ProfileConfig, load_config
-from odoo_task_porter.domain.errors import OdooError
+from odoo_task_porter.config.settings import AppConfig, load_config
 
 
 def load_app_config(config_path: Path) -> AppConfig:
@@ -16,20 +15,14 @@ def load_app_config(config_path: Path) -> AppConfig:
     return load_config(config_path)
 
 
-def require_profile(config: AppConfig, profile_name: str) -> ProfileConfig:
-    """Return profile configuration or raise a domain-level error."""
-    profile = config.profiles.get(profile_name)
-    if not profile:
-        raise OdooError(f"Profile '{profile_name}' not found in config.")
-    return profile
-
-
-def build_repository(profile_name: str, profile: ProfileConfig) -> OdooRepository:
-    """Create an authenticated Odoo repository for a given profile."""
+def build_repository(profile_name: str) -> OdooRepository:
+    """Create an authenticated Odoo repository for a given auth profile."""
     from odoo_task_porter.config.auth import AuthManager
 
-    auth = AuthManager().get(profile_name, profile.username)
-    client = OdooClient(profile.url, profile.db, profile.username, auth.password)
+    auth = AuthManager().get(
+        profile_name,
+    )
+    client = OdooClient(auth.url, auth.db, auth.username, auth.password)
     return OdooRepository(client)
 
 def inquirer_question(field_name: str, metadata: dict[str], default_value: any=None, overwrite_message: str=None, inquirer_theme=None):
@@ -67,4 +60,3 @@ def with_progress_bar(tag: str, total: int, action):
     ) as progress:
         task_id = progress.add_task(tag, total=total)
         action(progress, task_id)
-
