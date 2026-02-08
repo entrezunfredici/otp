@@ -63,9 +63,16 @@ class OdooClient {
 
 class OdooRepository {
   +OdooClient client
+  +get_version_spec() OdooVersionSpec
+  +resolve_task_field_aliases() dict
+  +resolve_project_field_aliases() dict
+  +resolve_tag_field_aliases() dict
+  +resolve_stage_field_aliases() dict
+  +resolve_user_field_aliases() dict
   +get_project_id(project_name) int
   +find_task_by_import_key(project_id, import_key)
   +upsert_task(project_id, values, import_key) int
+  +find_tag_id(name) int?
   +get_or_create_tag(name) int
   +get_or_create_stage(project_id, status) int
   +find_user(owner) int?
@@ -151,5 +158,66 @@ class PathsConfig {
   +Path export_out_dir
   +ensure_dirs()
 }
+
+class OdooVersionSpec {
+  +str version_name
+  +ModelMapping models
+  +TaskFieldMapping task
+  +ProjectFieldMapping project
+  +TagFieldMapping tag
+  +StageFieldMapping stage
+  +UserFieldMapping user
+}
+class ModelMapping {
+  +str project
+  +str task
+  +str tag
+  +str stage
+  +str user
+}
+class TaskFieldMapping {
+  +str id
+  +str name
+  +str description
+  +str project
+  +str tags
+  +str stage
+  +str deadline
+  +str import_key
+  +tuple estimation_candidates
+  +tuple owner_candidates
+  +tuple dependency_candidates
+  +dict field_aliases
+}
+class ProjectFieldMapping {
+  +str id
+  +str name
+  +dict field_aliases
+}
+class TagFieldMapping {
+  +str id
+  +str name
+  +dict field_aliases
+}
+class StageFieldMapping {
+  +str id
+  +str name
+  +str projects_relation
+  +dict field_aliases
+}
+class UserFieldMapping {
+  +str id
+  +str login
+  +str name
+  +dict field_aliases
+}
+
+OdooRepository ..> OdooVersionSpec
+OdooVersionSpec "1" *-- "1" ModelMapping
+OdooVersionSpec "1" *-- "1" TaskFieldMapping
+OdooVersionSpec "1" *-- "1" ProjectFieldMapping
+OdooVersionSpec "1" *-- "1" TagFieldMapping
+OdooVersionSpec "1" *-- "1" StageFieldMapping
+OdooVersionSpec "1" *-- "1" UserFieldMapping
 
 ```

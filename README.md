@@ -126,6 +126,28 @@ Compatibilite versions Odoo :
 - Les commandes `import` et `export` utilisent ce mapping + verification des champs disponibles.
 - Si la version n'est pas detectee, un fallback automatique vers le mapping v19 est applique.
 
+## Systeme de mapping de versions Odoo
+
+Le systeme est base sur des specifications Python versionnees :
+
+- `odoo_task_porter/versions/spec.py` : classes de spec (`OdooVersionSpec`, `ModelMapping`, `*FieldMapping`).
+- `odoo_task_porter/versions/odoo_18.py` : mapping v18.
+- `odoo_task_porter/versions/odoo_19.py` : mapping v19.
+- `odoo_task_porter/versions/__init__.py` : resolver `resolve_version_spec`.
+
+Au runtime :
+
+- le client detecte la version majeure Odoo a la connexion.
+- le repository charge la spec associee.
+- les operations `import` et `export` passent par les aliases resolves pour taper les bons modeles/champs.
+
+Ajouter une nouvelle version (ex: v20) :
+
+1. Creer `odoo_task_porter/versions/odoo_20.py` avec un `SPEC`.
+2. Declarer les modeles (`project`, `task`, `tag`, `stage`, `user`).
+3. Completer les aliases de champs (au minimum ceux utilises par import/export).
+4. Ajouter le cas `major_version == 20` dans `resolve_version_spec`.
+
 ## Lint
 
 Valider des fichiers markdown sans Odoo :
