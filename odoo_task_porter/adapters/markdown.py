@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from html import escape
 from pathlib import Path
 import re
 from typing import Iterable
@@ -11,17 +12,26 @@ from odoo_task_porter.domain.errors import ValidationError
 from odoo_task_porter.domain.models import ParsedMarkdown, TaskMetadata
 from odoo_task_porter.rules.validate import require_fields, validate_metadata
 
-META_SECTION_HEADERS = {"## Métadonnées", "## MÃ©tadonnÃ©es"}
-DEPENDENCIES_HEADERS = {"## Dépendances & risques", "## DÃ©pendances & risques"}
-DEPENDENCIES_LABELS = ("Dépendances", "DÃ©pendances")
+META_SECTION_HEADERS = {
+    "## Métadonnées",
+    "## MÃ©tadonnÃ©es",
+    "## MÃƒÂ©tadonnÃƒÂ©es",
+}
+DEPENDENCIES_HEADERS = {
+    "## Dépendances & risques",
+    "## DÃ©pendances & risques",
+    "## DÃƒÂ©pendances & risques",
+}
+DEPENDENCIES_LABELS = ("Dépendances", "DÃ©pendances", "DÃƒÂ©pendances")
 
 META_FIELD_MAP = {
     "id": "id",
     "type": "type",
     "statut": "statut",
     "priorité": "priority",
-    "prioritã©": "priority",
     "prioritÃ©": "priority",
+    "prioritÃ£Â©": "priority",
+    "prioritÃƒÂ©": "priority",
     "moscow": "moscow",
     "estimation": "estimation",
     "owner": "owner",
@@ -95,6 +105,63 @@ def load_template(path: Path) -> MarkdownTemplate:
     return MarkdownTemplate(name=path.name, content=path.read_text(encoding="utf-8"))
 
 
+def markdown_to_odoo_html(markdown_text: str) -> str:
+    """Convert a markdown subset to HTML suited for Odoo descriptions."""
+    lines = markdown_text.splitlines()
+    html_parts: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            i += 1
+            continue
+
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            level = max(1, min(6, level))
+            content = stripped[level:].strip()
+            html_parts.append(f"<h{level}>{_render_inline_markdown(content)}</h{level}>")
+            i += 1
+            continue
+
+        if _is_table_header(lines, i):
+            table_html, next_index = _render_table(lines, i)
+            html_parts.append(table_html)
+            i = next_index
+            continue
+
+        if _is_unordered_item(stripped):
+            list_html, next_index = _render_unordered_list(lines, i)
+            html_parts.append(list_html)
+            i = next_index
+            continue
+
+        if _is_ordered_item(stripped):
+            list_html, next_index = _render_ordered_list(lines, i)
+            html_parts.append(list_html)
+            i = next_index
+            continue
+
+        paragraph_lines = [stripped]
+        i += 1
+        while i < len(lines):
+            nxt = lines[i].strip()
+            if not nxt:
+                break
+            if nxt.startswith("#") or _is_unordered_item(nxt) or _is_ordered_item(nxt):
+                break
+            if _is_table_header(lines, i):
+                break
+            paragraph_lines.append(nxt)
+            i += 1
+        html_parts.append(f"<p>{_render_inline_markdown(' '.join(paragraph_lines))}</p>")
+
+    if not html_parts:
+        return "<p></p>"
+    return "\n".join(html_parts)
+
+
 def _extract_metadata(lines: list[str]) -> dict[str, str]:
     start_index: int | None = None
     for index, line in enumerate(lines):
@@ -102,14 +169,14 @@ def _extract_metadata(lines: list[str]) -> dict[str, str]:
             start_index = index + 1
             break
     if start_index is None:
-        raise ValidationError("Section '## Métadonnées' manquante.")
+        raise ValidationError("Section '## MÃ©tadonnÃ©es' manquante.")
 
     values: dict[str, str] = {}
     for line in lines[start_index:]:
         if line.startswith("## "):
             break
-        if line.strip().startswith("-"):
-            match = re.match(r"^-\s*([^:]+):\s*(.*)$", line.strip())
+        if line.startswith("- "):
+            match = re.match(r"^-\s*([^:]+):\s*(.*)$", line)
             if not match:
                 continue
             key_raw, value = match.groups()
@@ -207,5 +274,101 @@ def _sanitize_metadata_value(field: str, value: str) -> str:
     if field == "liens" and value.startswith("(") and value.endswith(")"):
         return ""
     if field == "moscow":
-        value = value.replace("Won''t", "Won't").replace("Wonâ€™t", "Won't")
+        value = value.replace("Won''t", "Won't").replace("WonÃ¢â‚¬â„¢t", "Won't")
     return value
+
+
+def _is_unordered_item(stripped_line: str) -> bool:
+    return stripped_line.startswith("- ") or stripped_line.startswith("* ")
+
+
+def _is_ordered_item(stripped_line: str) -> bool:
+    return re.match(r"^\d+\.\s+", stripped_line) is not None
+
+
+def _is_table_header(lines: list[str], index: int) -> bool:
+    if index + 1 >= len(lines):
+        return False
+    header = lines[index].strip()
+    separator = lines[index + 1].strip()
+    if "|" not in header:
+        return False
+    return re.match(r"^\|?[\s:-]+(?:\|[\s:-]+)+\|?$", separator) is not None
+
+
+def _render_table(lines: list[str], start_index: int) -> tuple[str, int]:
+    header_cells = _split_table_row(lines[start_index].strip())
+    i = start_index + 2
+    body_rows: list[list[str]] = []
+    while i < len(lines):
+        row = lines[i].strip()
+        if not row or "|" not in row:
+            break
+        body_rows.append(_split_table_row(row))
+        i += 1
+
+    head_html = "".join(f"<th>{_render_inline_markdown(cell)}</th>" for cell in header_cells)
+    body_html_parts: list[str] = []
+    for row in body_rows:
+        cells_html = "".join(f"<td>{_render_inline_markdown(cell)}</td>" for cell in row)
+        body_html_parts.append(f"<tr>{cells_html}</tr>")
+    body_html = "".join(body_html_parts)
+    return (
+        "<table class=\"table table-sm table-bordered\">"
+        f"<thead><tr>{head_html}</tr></thead><tbody>{body_html}</tbody></table>",
+        i,
+    )
+
+
+def _split_table_row(row: str) -> list[str]:
+    trimmed = row.strip("|")
+    return [cell.strip() for cell in trimmed.split("|")]
+
+
+def _render_unordered_list(lines: list[str], start_index: int) -> tuple[str, int]:
+    i = start_index
+    items: list[str] = []
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if not _is_unordered_item(stripped):
+            break
+        content = stripped[2:].strip()
+        checkbox_match = re.match(r"^\[( |x|X)\]\s+(.*)$", content)
+        if checkbox_match:
+            checked = checkbox_match.group(1).lower() == "x"
+            label = _render_inline_markdown(checkbox_match.group(2).strip())
+            checked_attr = " checked" if checked else ""
+            checkbox = (
+                f"<label><input type=\"checkbox\" disabled{checked_attr}> {label}</label>"
+            )
+            items.append(f"<li>{checkbox}</li>")
+        else:
+            items.append(f"<li>{_render_inline_markdown(content)}</li>")
+        i += 1
+    return f"<ul>{''.join(items)}</ul>", i
+
+
+def _render_ordered_list(lines: list[str], start_index: int) -> tuple[str, int]:
+    i = start_index
+    items: list[str] = []
+    while i < len(lines):
+        stripped = lines[i].strip()
+        match = re.match(r"^\d+\.\s+(.*)$", stripped)
+        if not match:
+            break
+        items.append(f"<li>{_render_inline_markdown(match.group(1).strip())}</li>")
+        i += 1
+    return f"<ol>{''.join(items)}</ol>", i
+
+
+def _render_inline_markdown(text: str) -> str:
+    rendered = escape(text, quote=True)
+    rendered = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>',
+        rendered,
+    )
+    rendered = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", rendered)
+    rendered = re.sub(r"\*([^*]+)\*", r"<em>\1</em>", rendered)
+    rendered = re.sub(r"`([^`]+)`", r"<code>\1</code>", rendered)
+    return rendered

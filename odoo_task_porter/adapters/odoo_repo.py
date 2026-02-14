@@ -92,7 +92,7 @@ class OdooRepository:
         configured_aliases.setdefault("name", (spec.user.name,))
         return self._resolve_model_field_aliases(spec.models.user, configured_aliases)
 
-    def get_project_id(self, project_name: str) -> int:
+    def find_project_id(self, project_name: str) -> int | None:
         spec = self.get_version_spec()
         project_fields = self.resolve_project_field_aliases()
         project_name_field = self._require_alias(project_fields, "name", spec.models.project)
@@ -103,8 +103,44 @@ class OdooRepository:
             [project_id_field, project_name_field],
         )
         if not results:
-            raise OdooError(f"Project '{project_name}' not found.")
+            return None
         return int(results[0][project_id_field])
+
+    def get_project_id(self, project_name: str) -> int:
+        project_id = self.find_project_id(project_name)
+        if project_id is None:
+            raise OdooError(f"Project '{project_name}' not found.")
+        return project_id
+
+    def create_project(self, project_name: str) -> int:
+        spec = self.get_version_spec()
+        project_fields = self.resolve_project_field_aliases()
+        project_name_field = self._require_alias(project_fields, "name", spec.models.project)
+        return self.client.create(spec.models.project, {project_name_field: project_name})
+
+    def update_task(self, task_id: int, values: dict[str, Any]) -> None:
+        """Update one task by id."""
+        spec = self.get_version_spec()
+        success = self.client.write(spec.models.task, [task_id], values)
+        if not success:
+            raise OdooError(f"Echec de mise a jour de la tache {task_id}.")
+
+    def list_project_names(self) -> list[str]:
+        """List available project names."""
+        spec = self.get_version_spec()
+        project_fields = self.resolve_project_field_aliases()
+        project_name_field = self._require_alias(project_fields, "name", spec.models.project)
+        records = self.client.search_read(
+            spec.models.project,
+            [],
+            [project_name_field],
+        )
+        names = [
+            str(record[project_name_field]).strip()
+            for record in records
+            if record.get(project_name_field)
+        ]
+        return sorted(set(names), key=str.casefold)
 
     def ensure_import_key_field(self, import_key_field: str | None = None) -> None:
         spec = self.get_version_spec()

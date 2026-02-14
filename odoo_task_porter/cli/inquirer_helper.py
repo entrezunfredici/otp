@@ -35,3 +35,14 @@ def prompt_checkbox(message: str, choices: list[str]) -> list[str]:
     prompt = inquirer.checkbox(message=message, choices=choices)
     result = prompt.execute()
     return [str(item).strip() for item in result if str(item).strip()]
+
+
+def prompt_select(message: str, choices: list[str], default: str | None = None) -> str:
+    """Prompt for one selection using InquirerPy select."""
+    from InquirerPy import inquirer
+
+    kwargs = {"message": message, "choices": choices}
+    if default is not None:
+        kwargs["default"] = default
+    prompt = inquirer.select(**kwargs)
+    return str(prompt.execute()).strip()

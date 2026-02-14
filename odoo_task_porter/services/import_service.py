@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-from odoo_task_porter.adapters.markdown import parse_markdown
+from odoo_task_porter.adapters.markdown import markdown_to_odoo_html, parse_markdown
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.domain.errors import ValidationError
 from odoo_task_porter.domain.models import Report
@@ -110,11 +110,14 @@ class ImportService():
         tags = self._tags_for_metadata(parsed.metadata)
         tag_ids = [self.repo.get_or_create_tag(tag) for tag in tags]
         stage_id = self.repo.get_or_create_stage(project_id, parsed.metadata.status)
-        description = self._inject_links(parsed.description, parsed.metadata.links)
+        description_markdown = self._inject_links(parsed.description, parsed.metadata.links)
         if parsed.dependencies_other or (parsed.dependencies_blocking and not dependency_field):
-            description = self._append_dependencies(
-                description, parsed.dependencies_blocking if not dependency_field else [], parsed.dependencies_other
+            description_markdown = self._append_dependencies(
+                description_markdown,
+                parsed.dependencies_blocking if not dependency_field else [],
+                parsed.dependencies_other,
             )
+        description = markdown_to_odoo_html(description_markdown)
         values = {
             task_fields["name"]: parsed.title,
             task_fields["description"]: description,

@@ -90,8 +90,11 @@ Fallbacks : si le mot de passe n'est pas en keyring, la variable `ODOO_PASSWORD`
 ## Import
 
 ```bash
-odoo-task-porter import --profile dev --project "Mon projet" --tasks-md-dir tasks_md
+odoo-task-porter import --tasks-md-dir tasks_md
 ```
+
+En mode interactif (TTY), le `profile` et le `project` sont proposes via une selection Inquirer.
+Tu peux encore forcer une valeur avec `--profile` et/ou `--project`.
 
 Options :
 
@@ -100,13 +103,17 @@ Options :
 - `--report-json path.json` : ecrire le rapport en JSON.
 
 Par defaut, le champ custom `x_import_key` doit exister sur `project.task`.
+Le contenu Markdown est converti en HTML pour `description` Odoo (titres, tableaux, listes, checkboxes, liens).
 
 ## Export
 
 ```bash
-odoo-task-porter export --profile dev --project "Mon projet" \
+odoo-task-porter export \
   --templates-empty-dir templates/empty --export-out-dir exported
 ```
+
+En mode interactif (TTY), le `profile` et le `project` sont proposes via une selection Inquirer.
+Tu peux encore forcer une valeur avec `--profile` et/ou `--project`.
 
 Filtres :
 
@@ -155,6 +162,33 @@ Valider des fichiers markdown sans Odoo :
 ```bash
 odoo-task-porter lint --tasks-md-dir tasks_md
 ```
+
+## Creation d'un projet Odoo
+
+Creer un projet directement dans Odoo :
+
+```bash
+odoo-task-porter create_project
+```
+
+Ou avec des valeurs explicites :
+
+```bash
+odoo-task-porter create_project --profile dev --project-name "Refonte CRM"
+```
+
+En mode interactif (TTY), le `profile` et le `project-name` peuvent etre saisis via Inquirer.
+Par defaut, la commande cree aussi les sections standards du projet et importe les taches de cadrage par defaut depuis `templates/tasks_templates`.
+Un planning Gantt est ensuite applique automatiquement a partir de l'instant courant (date+heure), en enchainant les taches dans l'ordre des templates de cadrage.
+Les etapes des taches importees sont lues dans la section `## Etapes des taches` du template projet.
+
+Options utiles :
+
+- `--templates-source-dir <dir>` : changer le dossier source des templates par defaut.
+- `--project-template-file <file>` : template projet contenant notamment la section de mapping des etapes.
+- `--skip-default-sections` : ne pas creer les sections standards.
+- `--skip-default-tasks` : ne pas importer les taches par defaut.
+- `--allow-existing` : reutiliser un projet deja cree pour (re)appliquer sections, taches et planning.
 
 ## Exemples
 

@@ -6,17 +6,18 @@ from pathlib import Path
 
 from odoo_task_porter.cli.base_command import BaseCommand, CommandHelper
 from odoo_task_porter.cli.generic_functions import build_repository, load_app_config
+from odoo_task_porter.cli.inquirer_helper import can_prompt_interactively, prompt_select
 from odoo_task_porter.cli.reporting import emit_report
 from odoo_task_porter.services.import_service import ImportOptions, ImportService
 
 
 class ImportCommand(BaseCommand):
     name = "import"
-    summary = "Importer des tâches Markdown vers Odoo."
+    summary = "Importer des taches Markdown vers Odoo."
 
     def configure(self, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--profile", required=True)
-        parser.add_argument("--project", required=True)
+        parser.add_argument("--profile")
+        parser.add_argument("--project")
         parser.add_argument("--tasks-md-dir", type=Path)
         parser.add_argument("--dry-run", action="store_true")
         parser.add_argument("--create-only", action="store_true")
@@ -24,10 +25,12 @@ class ImportCommand(BaseCommand):
 
     def execute(self, args: argparse.Namespace) -> int:
         config = load_app_config(args.config)
-        repo = build_repository(args.profile)
+        profile = self._resolve_profile(args)
+        repo = build_repository(profile)
+        project = self._resolve_project(args, repo)
         tasks_dir = args.tasks_md_dir or config.tasks_md_dir
         options = ImportOptions(dry_run=args.dry_run, create_only=args.create_only)
-        report = ImportService(repo).run(tasks_dir, args.project, options)
+        report = ImportService(repo).run(tasks_dir, project, options)
         emit_report(report, args.report_json)
         return 0
 
@@ -36,7 +39,55 @@ class ImportCommand(BaseCommand):
             name=self.name,
             summary=self.summary,
             usage=(
-                "odoo-task-porter import --profile <name> --project <project> "
+                "odoo-task-porter import [--profile <name>] [--project <project>] "
                 "[--tasks-md-dir <dir>] [--dry-run] [--create-only] [--report-json <file>]"
             ),
         )
+
+    def _resolve_profile(self, args: argparse.Namespace) -> str:
+        profile = (args.profile or "").strip()
+        if profile:
+            return profile
+        if not can_prompt_interactively():
+            raise ValueError("L'option --profile est obligatoire hors mode interactif.")
+
+        from odoo_task_porter.config.auth import AuthManager
+
+        profiles = AuthManager().list_profiles()
+        if not profiles:
+            raise ValueError(
+                "Aucun profil disponible. Lance d'abord 'odoo-task-porter auth set --profile <name>'."
+            )
+        try:
+            selected = prompt_select("Selectionne un profil Odoo:", profiles)
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "InquirerPy n'est pas installe. Lance 'pip install -e .' puis reessaie."
+            ) from exc
+        except KeyboardInterrupt as exc:
+            raise RuntimeError("Saisie annulee par l'utilisateur.") from exc
+        if not selected:
+            raise ValueError("Aucun profil selectionne.")
+        return selected
+
+    def _resolve_project(self, args: argparse.Namespace, repo) -> str:
+        project = (args.project or "").strip()
+        if project:
+            return project
+        if not can_prompt_interactively():
+            raise ValueError("L'option --project est obligatoire hors mode interactif.")
+
+        projects = repo.list_project_names()
+        if not projects:
+            raise ValueError("Aucun projet Odoo disponible pour ce profil.")
+        try:
+            selected = prompt_select("Selectionne un projet Odoo:", projects)
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "InquirerPy n'est pas installe. Lance 'pip install -e .' puis reessaie."
+            ) from exc
+        except KeyboardInterrupt as exc:
+            raise RuntimeError("Saisie annulee par l'utilisateur.") from exc
+        if not selected:
+            raise ValueError("Aucun projet selectionne.")
+        return selected
