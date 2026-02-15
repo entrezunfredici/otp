@@ -48,7 +48,12 @@ class ImportService():
         task_fields = self.repo.resolve_task_fields()
         import_key_field = task_fields["import_key"]
         if not options.create_only:
-            self.repo.ensure_import_key_field(import_key_field)
+            if import_key_field:
+                self.repo.ensure_import_key_field(import_key_field)
+            else:
+                report.add_warning(
+                    "Champ x_import_key indisponible: fallback sur le titre pour detecter les mises a jour."
+                )
         estimation_field = task_fields["estimation_hours"]
         deadline_field = task_fields["deadline"]
         owner_field = task_fields["owner"]
@@ -74,7 +79,10 @@ class ImportService():
                     dependency_field,
                 )
                 action = "update"
-                existing = self.repo.find_task_by_import_key(project_id, import_key)
+                if import_key_field:
+                    existing = self.repo.find_task_by_import_key(project_id, import_key)
+                else:
+                    existing = self.repo.find_task_by_project_and_name(project_id, parsed.title)
                 if not existing:
                     action = "create"
                 if options.dry_run:

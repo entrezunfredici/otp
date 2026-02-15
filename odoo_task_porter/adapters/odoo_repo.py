@@ -167,10 +167,29 @@ class OdooRepository:
         )
         return results[0] if results else None
 
+    def find_task_by_project_and_name(self, project_id: int, task_name: str) -> dict[str, Any] | None:
+        spec = self.get_version_spec()
+        task_fields = self.resolve_task_fields()
+        results = self.client.search_read(
+            spec.models.task,
+            [
+                [task_fields["project"], "=", project_id],
+                [task_fields["name"], "=", task_name],
+            ],
+            [task_fields["id"], task_fields["name"]],
+        )
+        return results[0] if results else None
+
     def upsert_task(self, project_id: int, values: dict[str, Any], import_key: str) -> int:
         spec = self.get_version_spec()
         task_fields = self.resolve_task_fields()
-        existing = self.find_task_by_import_key(project_id, import_key)
+        existing = None
+        if task_fields["import_key"]:
+            existing = self.find_task_by_import_key(project_id, import_key)
+        else:
+            task_name = values.get(task_fields["name"])
+            if isinstance(task_name, str) and task_name.strip():
+                existing = self.find_task_by_project_and_name(project_id, task_name)
         if existing:
             self.client.write(spec.models.task, [int(existing[task_fields["id"]])], values)
             return int(existing[task_fields["id"]])
