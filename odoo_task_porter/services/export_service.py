@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 import ast
 import re
@@ -192,7 +192,15 @@ class ExportService:
         if not value:
             return None
         if isinstance(value, str):
-            return date.fromisoformat(value)
+            raw = value.strip()
+            if not raw:
+                return None
+            try:
+                return date.fromisoformat(raw)
+            except ValueError:
+                # Odoo can return datetime strings like "YYYY-MM-DD HH:MM:SS".
+                normalized = raw.replace("Z", "+00:00")
+                return datetime.fromisoformat(normalized).date()
         return None
 
     @staticmethod
