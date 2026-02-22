@@ -30,6 +30,7 @@ class ParsedMarkdown:
     description: str
     raw_body: str
     source_path: Path
+    task_code: str | None = None
     dependencies_blocking: list[str] = field(default_factory=list)
     dependencies_other: list[str] = field(default_factory=list)
 

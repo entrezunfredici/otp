@@ -60,6 +60,31 @@ def test_markdown_to_odoo_html_supports_core_blocks() -> None:
     assert "<td>A1</td>" in html
 
 
+def test_markdown_to_odoo_html_supports_extended_checkboxes_and_table_separator() -> None:
+    markdown = """## Checklist
+
++ [ ] Item plus
+- [✓] Item coche
+- ☑ Item unicode coche
+- ☐ Item unicode vide
+
+| Col A | Col B |
+| --- | ——— |
+| A1 | B1 |
+"""
+    html = markdown_to_odoo_html(markdown)
+
+    assert "<input type=\"checkbox\" disabled>" in html
+    assert "<input type=\"checkbox\" disabled checked>" in html
+    assert "☐ Item plus" in html
+    assert "☑ Item coche" in html
+    assert "☑ Item unicode coche" in html
+    assert "☐ Item unicode vide" in html
+    assert "<table" in html
+    assert "<th>Col A</th>" in html
+    assert "<td>A1</td>" in html
+
+
 def test_parse_markdown_ignores_indented_list_items_in_metadata_section(tmp_path: Path) -> None:
     content = """# Test
 
@@ -112,3 +137,23 @@ Texte.
     assert parsed.metadata.moscow == "Must"
     assert parsed.metadata.estimation == "S"
     assert parsed.metadata.owner == "@alice"
+
+
+def test_parse_markdown_extracts_task_code_from_metadata_id(tmp_path: Path) -> None:
+    content = """# D-102 - Docker Compose
+
+## Metadonnees
+- ID: D-102
+- Type: dev
+- Statut: todo
+- Priorite: P1
+- MoSCoW: Must
+- Estimation: S
+- Owner: @alice
+"""
+    path = tmp_path / "task_code.md"
+    path.write_text(content, encoding="utf-8")
+
+    parsed = parse_markdown(path)
+
+    assert parsed.task_code == "D-102"

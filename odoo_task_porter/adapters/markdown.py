@@ -51,6 +51,10 @@ META_FIELD_MAP = {
     "liens": "liens",
 }
 
+TABLE_SEPARATOR_RE = re.compile(r"^\|?[\s:~\-\u2013\u2014]+(?:\|[\s:~\-\u2013\u2014]+)+\|?$")
+CHECKBOX_MARK_RE = re.compile(r"^\[( |x|X|✓|✔|☑)\]\s+(.*)$")
+UNICODE_CHECKBOX_RE = re.compile(r"^(☐|☑|✅)\s+(.*)$")
+
 
 @dataclass(frozen=True)
 class MarkdownTemplate:
@@ -81,6 +85,7 @@ def parse_markdown(path: Path) -> ParsedMarkdown:
         links=_parse_links(metadata_values.get("liens", "")),
     )
     validate_metadata(task_metadata)
+    task_code = _extract_task_code(metadata_values.get("id"), title)
     body, dependencies_blocking, dependencies_other = _extract_body(lines)
     return ParsedMarkdown(
         title=title,
@@ -88,6 +93,7 @@ def parse_markdown(path: Path) -> ParsedMarkdown:
         description=body.strip(),
         raw_body=text,
         source_path=path,
+        task_code=task_code,
         dependencies_blocking=dependencies_blocking,
         dependencies_other=dependencies_other,
     )
@@ -195,8 +201,6 @@ def _extract_metadata(lines: list[str]) -> dict[str, str]:
             key = _normalize_metadata_key(key_raw)
             mapped = META_FIELD_MAP.get(key)
             if mapped:
-                if mapped == "id":
-                    continue
                 values[mapped] = _sanitize_metadata_value(mapped, _normalize_metadata_value(value))
     return values
 
@@ -272,6 +276,14 @@ def _parse_dependencies(lines: Iterable[str]) -> tuple[list[str], list[str]]:
     return blocking, other
 
 
+def _extract_task_code(metadata_id: str | None, title: str) -> str | None:
+    for source in (metadata_id or "", title):
+        match = re.search(r"\b([A-Za-z]+-\d+)\b", source)
+        if match:
+            return match.group(1).upper()
+    return None
+
+
 def _sanitize_metadata_value(field: str, value: str) -> str:
     if not value:
         return value
@@ -325,7 +337,7 @@ def _normalize_metadata_value(value: str) -> str:
 
 
 def _is_unordered_item(stripped_line: str) -> bool:
-    return stripped_line.startswith("- ") or stripped_line.startswith("* ")
+    return stripped_line.startswith("- ") or stripped_line.startswith("* ") or stripped_line.startswith("+ ")
 
 
 def _is_ordered_item(stripped_line: str) -> bool:
@@ -339,7 +351,7 @@ def _is_table_header(lines: list[str], index: int) -> bool:
     separator = lines[index + 1].strip()
     if "|" not in header:
         return False
-    return re.match(r"^\|?[\s:-]+(?:\|[\s:-]+)+\|?$", separator) is not None
+    return TABLE_SEPARATOR_RE.match(separator) is not None
 
 
 def _render_table(lines: list[str], start_index: int) -> tuple[str, int]:
@@ -379,17 +391,33 @@ def _render_unordered_list(lines: list[str], start_index: int) -> tuple[str, int
         if not _is_unordered_item(stripped):
             break
         content = stripped[2:].strip()
-        checkbox_match = re.match(r"^\[( |x|X)\]\s+(.*)$", content)
+        checkbox_match = CHECKBOX_MARK_RE.match(content)
         if checkbox_match:
-            checked = checkbox_match.group(1).lower() == "x"
+            checked = checkbox_match.group(1) in {"x", "X", "✓", "✔", "☑"}
             label = _render_inline_markdown(checkbox_match.group(2).strip())
+            symbol = "☑" if checked else "☐"
             checked_attr = " checked" if checked else ""
             checkbox = (
-                f"<label><input type=\"checkbox\" disabled{checked_attr}> {label}</label>"
+                f"<label><input type=\"checkbox\" disabled{checked_attr}> {symbol} {label}</label>"
             )
             items.append(f"<li>{checkbox}</li>")
-        else:
-            items.append(f"<li>{_render_inline_markdown(content)}</li>")
+            i += 1
+            continue
+
+        unicode_checkbox_match = UNICODE_CHECKBOX_RE.match(content)
+        if unicode_checkbox_match:
+            checked = unicode_checkbox_match.group(1) in {"☑", "✅"}
+            label = _render_inline_markdown(unicode_checkbox_match.group(2).strip())
+            symbol = "☑" if checked else "☐"
+            checked_attr = " checked" if checked else ""
+            checkbox = (
+                f"<label><input type=\"checkbox\" disabled{checked_attr}> {symbol} {label}</label>"
+            )
+            items.append(f"<li>{checkbox}</li>")
+            i += 1
+            continue
+
+        items.append(f"<li>{_render_inline_markdown(content)}</li>")
         i += 1
     return f"<ul>{''.join(items)}</ul>", i
 

@@ -9,7 +9,7 @@ from typing import Iterable
 from odoo_task_porter.adapters.markdown import markdown_to_odoo_html, parse_markdown
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.domain.errors import ValidationError
-from odoo_task_porter.domain.models import Report
+from odoo_task_porter.domain.models import ParsedMarkdown, Report
 from odoo_task_porter.rules.ids import build_import_key
 from odoo_task_porter.transform.mapping import TagMapping, estimation_to_hours
 
@@ -44,6 +44,7 @@ class ImportService():
             report.add_warning(
                 f"Version Odoo non detectee. Fallback mapping: {spec.version_name}."
             )
+
         project_id = self.repo.get_project_id(project_name)
         task_fields = self.repo.resolve_task_fields()
         import_key_field = task_fields["import_key"]
@@ -54,6 +55,7 @@ class ImportService():
                 report.add_warning(
                     "Champ x_import_key indisponible: fallback sur le titre pour detecter les mises a jour."
                 )
+
         estimation_field = task_fields["estimation_hours"]
         deadline_field = task_fields["deadline"]
         owner_field = task_fields["owner"]
@@ -63,7 +65,11 @@ class ImportService():
             )
         if owner_field is None:
             report.add_warning("Aucun champ d'assignation detecte (user_id/user_ids).")
+
         dependency_field = self.repo.supports_dependency_field()
+        imported_tasks: list[tuple[ParsedMarkdown, int]] = []
+        code_to_task_id: dict[str, int] = {}
+
         for path in sorted(tasks_md_dir.glob("*.md")):
             try:
                 parsed = parse_markdown(path)
@@ -78,6 +84,7 @@ class ImportService():
                     owner_field,
                     dependency_field,
                 )
+
                 action = "update"
                 if import_key_field:
                     existing = self.repo.find_task_by_import_key(project_id, import_key)
@@ -85,28 +92,42 @@ class ImportService():
                     existing = self.repo.find_task_by_project_and_name(project_id, parsed.title)
                 if not existing:
                     action = "create"
+
                 if options.dry_run:
                     report.add_item(path.name, "dry-run", f"Would {action} task '{parsed.title}'.")
                     continue
+
                 task_id = self.repo.upsert_task(project_id, values, import_key)
-                if parsed.dependencies_blocking:
-                    self._apply_dependencies(
-                        parsed.dependencies_blocking,
-                        dependency_field,
-                        task_id,
-                        report,
-                        task_fields["name"],
-                    )
+                imported_tasks.append((parsed, task_id))
+                if parsed.task_code:
+                    code_to_task_id[parsed.task_code] = task_id
                 report.add_item(path.name, "ok", f"{action} task '{parsed.title}'.", task_id=task_id)
             except ValidationError as error:
                 report.add_item(path.name, "error", str(error))
             except Exception as error:  # noqa: BLE001 - capture to continue
                 report.add_item(path.name, "error", str(error))
+
+        if not options.dry_run and dependency_field:
+            for parsed, task_id in imported_tasks:
+                if not parsed.dependencies_blocking:
+                    continue
+                self._apply_dependencies(
+                    dependencies=parsed.dependencies_blocking,
+                    field_name=dependency_field,
+                    task_id=task_id,
+                    report=report,
+                    task_name_field=task_fields["name"],
+                    task_project_field=task_fields["project"],
+                    project_id=project_id,
+                    code_to_task_id=code_to_task_id,
+                    source_name=parsed.source_path.name,
+                )
+
         return report
 
     def _build_values(
         self,
-        parsed,
+        parsed: ParsedMarkdown,
         project_id: int,
         import_key: str,
         task_fields: dict[str, str | None],
@@ -118,6 +139,7 @@ class ImportService():
         tags = self._tags_for_metadata(parsed.metadata)
         tag_ids = [self.repo.get_or_create_tag(tag) for tag in tags]
         stage_id = self.repo.get_or_create_stage(project_id, parsed.metadata.status)
+
         description_markdown = self._inject_links(parsed.description, parsed.metadata.links)
         if parsed.dependencies_other or (parsed.dependencies_blocking and not dependency_field):
             description_markdown = self._append_dependencies(
@@ -126,6 +148,7 @@ class ImportService():
                 parsed.dependencies_other,
             )
         description = markdown_to_odoo_html(description_markdown)
+
         values = {
             task_fields["name"]: parsed.title,
             task_fields["description"]: description,
@@ -135,6 +158,7 @@ class ImportService():
         }
         if task_fields["import_key"]:
             values[task_fields["import_key"]] = import_key
+
         owner = parsed.metadata.owner
         if owner:
             owner_handle = owner.lstrip("@")
@@ -143,17 +167,19 @@ class ImportService():
                 values["user_id"] = user_id
             elif user_id and owner_field == "user_ids":
                 values["user_ids"] = [(6, 0, [user_id])]
+
         hours = estimation_to_hours(parsed.metadata.estimation)
         if estimation_field and hours is not None:
             values[estimation_field] = hours
         if deadline_field and parsed.metadata.deadline:
             values[deadline_field] = parsed.metadata.deadline.isoformat()
+
         return values
 
     def _tags_for_metadata(self, metadata) -> list[str]:
         tags = [f"{self.tag_mapping.type_prefix}{metadata.task_type}"]
         tags.append(f"{self.tag_mapping.priority_prefix}{metadata.priority}")
-        moscow = metadata.moscow.lower().replace("’", "").replace("'", "")
+        moscow = metadata.moscow.lower().replace("'", "")
         tags.append(f"{self.tag_mapping.moscow_prefix}{moscow}")
         return tags
 
@@ -172,37 +198,68 @@ class ImportService():
         task_id: int,
         report: Report,
         task_name_field: str | None,
+        task_project_field: str | None,
+        project_id: int,
+        code_to_task_id: dict[str, int],
+        source_name: str,
     ) -> None:
         dependency_ids: list[int] = []
+        unresolved: list[str] = []
+        resolved_fields = self.repo.resolve_task_fields()
+        task_id_field = resolved_fields["id"]
+
         for dep in dependencies:
-            task_name = self._extract_dependency_title(dep)
-            if not task_name:
+            dependency_code = self._extract_dependency_code(dep)
+            if not dependency_code:
+                unresolved.append(dep)
                 continue
-            if not task_name_field:
+
+            imported_dependency_id = code_to_task_id.get(dependency_code)
+            if imported_dependency_id:
+                if imported_dependency_id != task_id:
+                    dependency_ids.append(imported_dependency_id)
                 continue
-            resolved_fields = self.repo.resolve_task_fields()
+
+            if not task_name_field or not task_project_field:
+                unresolved.append(dep)
+                continue
+
             matches = self.repo.find_tasks(
-                [[task_name_field, "ilike", task_name]],
-                [resolved_fields["id"], task_name_field],
+                [
+                    [task_project_field, "=", project_id],
+                    [task_name_field, "ilike", dependency_code],
+                ],
+                [task_id_field, task_name_field],
             )
             if matches:
-                dependency_ids.append(int(matches[0][resolved_fields["id"]]))
+                dependency_ids.append(int(matches[0][task_id_field]))
+            else:
+                unresolved.append(dep)
+
+        dependency_ids = sorted(set(dep_id for dep_id in dependency_ids if dep_id != task_id))
         if field_name and dependency_ids:
             self.repo.add_dependencies(task_id, dependency_ids, field_name)
         elif dependency_ids:
-            report.add_warning("Dépendances non appliquées: champ manquant dans Odoo.")
+            report.add_warning("Dependances non appliquees: champ manquant dans Odoo.")
+
+        if unresolved:
+            report.add_warning(
+                f"{source_name}: dependances introuvables ou invalides: {', '.join(unresolved)}"
+            )
 
     @staticmethod
-    def _extract_dependency_title(content: str) -> str | None:
-        match = re.search(r"—\s*[“\"]?(.*?)[”\"]?(\s+—|$)", content)
+    def _extract_dependency_code(content: str) -> str | None:
+        match = re.search(r"^\s*\((?:Bloquante|Non-bloquante)\)\s*([A-Za-z]+-\d+)\b", content)
+        if not match:
+            match = re.search(r"\b([A-Za-z]+-\d+)\b", content)
         if match:
-            return match.group(1).strip()
+            return match.group(1).upper()
         return None
 
     @staticmethod
     def _append_dependencies(description: str, blocking: Iterable[str], other: Iterable[str]) -> str:
         sections = [description] if description else []
-        lines = ["Dépendances:"]
+        lines = ["Dependances:"]
         for dep in blocking:
             lines.append(f"- {dep}")
         for dep in other:
