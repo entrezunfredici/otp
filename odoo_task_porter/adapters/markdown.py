@@ -1,4 +1,4 @@
-"""Markdown parsing and rendering."""
+﻿"""Markdown parsing and rendering."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,25 +13,37 @@ from odoo_task_porter.domain.models import ParsedMarkdown, TaskMetadata
 from odoo_task_porter.rules.validate import require_fields, validate_metadata
 
 META_SECTION_HEADERS = {
-    "## Métadonnées",
-    "## MÃ©tadonnÃ©es",
-    "## MÃƒÂ©tadonnÃƒÂ©es",
+    "## Metadonnees",
+    "## M\u00e9tadonn\u00e9es",
+    "## M\u00c3\u00a9tadonn\u00c3\u00a9es",
+    "## M\u00c3\u0192\u00c2\u00a9tadonn\u00c3\u0192\u00c2\u00a9es",
+    "## M\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9tadonn\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9es",
 }
 DEPENDENCIES_HEADERS = {
-    "## Dépendances & risques",
-    "## DÃ©pendances & risques",
-    "## DÃƒÂ©pendances & risques",
+    "## Dependances & risques",
+    "## D\u00e9pendances & risques",
+    "## D\u00c3\u00a9pendances & risques",
+    "## D\u00c3\u0192\u00c2\u00a9pendances & risques",
+    "## D\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9pendances & risques",
 }
-DEPENDENCIES_LABELS = ("Dépendances", "DÃ©pendances", "DÃƒÂ©pendances")
+DEPENDENCIES_LABELS = (
+    "Dependances",
+    "D\u00e9pendances",
+    "D\u00c3\u00a9pendances",
+    "D\u00c3\u0192\u00c2\u00a9pendances",
+    "D\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9pendances",
+)
 
 META_FIELD_MAP = {
     "id": "id",
     "type": "type",
     "statut": "statut",
-    "priorité": "priority",
-    "prioritÃ©": "priority",
-    "prioritÃ£Â©": "priority",
-    "prioritÃƒÂ©": "priority",
+    "priorite": "priority",
+    "priorit\u00e9": "priority",
+    "priorit\u00c3\u00a9": "priority",
+    "priorit\u00c3\u0192\u00c2\u00a9": "priority",
+    "priorit\u00c3\u0192\u00c2\u00a3\u00c3\u201a\u00c2\u00a9": "priority",
+    "priorit\u00c3\u0192\u00c6\u2019\u00c3\u201a\u00c2\u00a9": "priority",
     "moscow": "moscow",
     "estimation": "estimation",
     "owner": "owner",
@@ -51,7 +63,7 @@ class MarkdownTemplate:
 def parse_markdown(path: Path) -> ParsedMarkdown:
     """Parse markdown file into structured data."""
     text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
+    lines = _drop_leading_blank_lines(_strip_front_matter(text.splitlines()))
     first_line = lines[0].lstrip("\ufeff") if lines else ""
     if not lines or not first_line.startswith("# "):
         raise ValidationError("Le fichier doit commencer par un titre '#'.")
@@ -169,7 +181,7 @@ def _extract_metadata(lines: list[str]) -> dict[str, str]:
             start_index = index + 1
             break
     if start_index is None:
-        raise ValidationError("Section '## MÃ©tadonnÃ©es' manquante.")
+        raise ValidationError("Section '## Metadonnees' manquante.")
 
     values: dict[str, str] = {}
     for line in lines[start_index:]:
@@ -180,12 +192,12 @@ def _extract_metadata(lines: list[str]) -> dict[str, str]:
             if not match:
                 continue
             key_raw, value = match.groups()
-            key = key_raw.strip().lower()
+            key = _normalize_metadata_key(key_raw)
             mapped = META_FIELD_MAP.get(key)
             if mapped:
                 if mapped == "id":
                     continue
-                values[mapped] = _sanitize_metadata_value(mapped, value.strip())
+                values[mapped] = _sanitize_metadata_value(mapped, _normalize_metadata_value(value))
     return values
 
 
@@ -274,8 +286,42 @@ def _sanitize_metadata_value(field: str, value: str) -> str:
     if field == "liens" and value.startswith("(") and value.endswith(")"):
         return ""
     if field == "moscow":
-        value = value.replace("Won''t", "Won't").replace("WonÃ¢â‚¬â„¢t", "Won't")
+        value = value.replace("Won''t", "Won't").replace("Won\u00c3\u0192\u00c2\u00a2\u00c3\u00a2\u20ac\u0161\u00c2\u00ac\u00c3\u00a2\u20ac\u017e\u00c2\u00a2t", "Won't")
     return value
+
+
+def _strip_front_matter(lines: list[str]) -> list[str]:
+    if not lines:
+        return lines
+    if lines[0].lstrip("\ufeff").strip() != "---":
+        return lines
+    end_index: int | None = None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            end_index = index
+            break
+    if end_index is None:
+        return lines
+    return lines[end_index + 1 :]
+
+
+def _drop_leading_blank_lines(lines: list[str]) -> list[str]:
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    return lines[index:]
+
+
+def _normalize_metadata_key(raw: str) -> str:
+    key = re.sub(r"[*`_]", "", raw).strip().lower()
+    return key
+
+
+def _normalize_metadata_value(value: str) -> str:
+    normalized = value.strip()
+    if len(normalized) >= 2 and normalized.startswith("`") and normalized.endswith("`"):
+        return normalized[1:-1].strip()
+    return normalized
 
 
 def _is_unordered_item(stripped_line: str) -> bool:

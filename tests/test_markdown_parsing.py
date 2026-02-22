@@ -79,3 +79,36 @@ Ok
     path.write_text(content, encoding="utf-8")
     parsed = parse_markdown(path)
     assert parsed.metadata.moscow == "Must"
+
+
+def test_parse_markdown_supports_front_matter_and_markdown_metadata(tmp_path: Path) -> None:
+    content = """---
+id: D-101
+title: "Initialiser repo Django/DRF"
+---
+
+# D-101 - Initialiser repo Django/DRF
+
+## Metadonnees
+- **Type**: `dev`
+- **Statut**: `todo`
+- **Priorite**: `P1`
+- **MoSCoW**: `Must`
+- **Estimation**: `S`
+- **Owner**: `@alice`
+
+## Objectif
+Texte.
+"""
+    path = tmp_path / "frontmatter.md"
+    path.write_text(content, encoding="utf-8")
+
+    parsed = parse_markdown(path)
+
+    assert parsed.title == "D-101 - Initialiser repo Django/DRF"
+    assert parsed.metadata.task_type == "dev"
+    assert parsed.metadata.status == "todo"
+    assert parsed.metadata.priority == "P1"
+    assert parsed.metadata.moscow == "Must"
+    assert parsed.metadata.estimation == "S"
+    assert parsed.metadata.owner == "@alice"
