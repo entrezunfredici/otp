@@ -23,6 +23,7 @@ class _RepoStub:
         }
         self.next_id = len(self.task_id_by_title) + 1
         self.dependencies_written: list[tuple[int, list[int], str]] = []
+        self.upsert_values_by_title: dict[str, dict] = {}
 
     def get_server_major_version(self) -> int | None:
         return 19
@@ -74,6 +75,7 @@ class _RepoStub:
 
     def upsert_task(self, project_id: int, values: dict, import_key: str) -> int:
         task_name = str(values["name"])
+        self.upsert_values_by_title[task_name] = values
         if task_name in self.task_id_by_title:
             self.updated.append(task_name)
             return self.task_id_by_title[task_name]
@@ -182,3 +184,36 @@ def test_import_applies_blocking_dependency_by_task_code(tmp_path: Path) -> None
 def test_extract_dependency_code_from_expected_format() -> None:
     line = "(Bloquante) D-101 - (voir tache) - Owner: @Frederic Macabiau - Attendu: prerequis OK"
     assert ImportService._extract_dependency_code(line) == "D-101"
+
+
+def test_import_preserves_html_description_without_escaping(tmp_path: Path) -> None:
+    task_file = tmp_path / "task_html.md"
+    task_file.write_text(
+        "\n".join(
+            [
+                "# Task HTML",
+                "",
+                "## Metadonnees",
+                "- Type: doc",
+                "- Statut: todo",
+                "- Priorite: P1",
+                "- MoSCoW: Must",
+                "- Estimation: 2h",
+                "- Liens: ",
+                "",
+                "## Description",
+                "",
+                "<p>Bloc <strong>HTML</strong></p>",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    repo = _RepoStub()
+    report = ImportService(repo).run(tmp_path, "Projet")
+
+    assert report.items[0].status == "ok"
+    description = str(repo.upsert_values_by_title["Task HTML"]["description"])
+    assert "<p>Bloc <strong>HTML</strong></p>" in description
+    assert "&lt;p&gt;" not in description

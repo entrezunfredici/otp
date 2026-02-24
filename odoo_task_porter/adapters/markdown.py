@@ -54,6 +54,10 @@ META_FIELD_MAP = {
 TABLE_SEPARATOR_RE = re.compile(r"^\|?[\s:~\-\u2013\u2014]+(?:\|[\s:~\-\u2013\u2014]+)+\|?$")
 CHECKBOX_MARK_RE = re.compile(r"^\[( |x|X|✓|✔|☑)\]\s+(.*)$")
 UNICODE_CHECKBOX_RE = re.compile(r"^(☐|☑|✅)\s+(.*)$")
+HTML_TAG_RE = re.compile(
+    r"<\s*/?\s*(?:p|ul|ol|li|h[1-6]|table|thead|tbody|tr|td|th|div|span|strong|em|a|blockquote|br)\b",
+    re.I,
+)
 
 
 @dataclass(frozen=True)
@@ -178,6 +182,22 @@ def markdown_to_odoo_html(markdown_text: str) -> str:
     if not html_parts:
         return "<p></p>"
     return "\n".join(html_parts)
+
+
+def is_odoo_html_fragment(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if not stripped.startswith("<"):
+        return False
+    return HTML_TAG_RE.search(stripped) is not None
+
+
+def html_to_odoo_html(html_text: str) -> str:
+    stripped = html_text.strip()
+    if not stripped:
+        return "<p></p>"
+    return stripped
 
 
 def _extract_metadata(lines: list[str]) -> dict[str, str]:

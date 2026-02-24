@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 import re
 from typing import Iterable
 
-from odoo_task_porter.adapters.markdown import markdown_to_odoo_html, parse_markdown
+from odoo_task_porter.adapters.markdown import (
+    html_to_odoo_html,
+    is_odoo_html_fragment,
+    markdown_to_odoo_html,
+    parse_markdown,
+)
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.domain.errors import ValidationError
 from odoo_task_porter.domain.models import ParsedMarkdown, Report
@@ -140,14 +146,25 @@ class ImportService():
         tag_ids = [self.repo.get_or_create_tag(tag) for tag in tags]
         stage_id = self.repo.get_or_create_stage(project_id, parsed.metadata.status)
 
-        description_markdown = self._inject_links(parsed.description, parsed.metadata.links)
-        if parsed.dependencies_other or (parsed.dependencies_blocking and not dependency_field):
-            description_markdown = self._append_dependencies(
-                description_markdown,
-                parsed.dependencies_blocking if not dependency_field else [],
-                parsed.dependencies_other,
-            )
-        description = markdown_to_odoo_html(description_markdown)
+        html_description = self._extract_html_description_body(parsed.description)
+        if html_description is not None and is_odoo_html_fragment(html_description):
+            description_html = self._inject_links_html(html_description, parsed.metadata.links)
+            if parsed.dependencies_other or (parsed.dependencies_blocking and not dependency_field):
+                description_html = self._append_dependencies_html(
+                    description_html,
+                    parsed.dependencies_blocking if not dependency_field else [],
+                    parsed.dependencies_other,
+                )
+            description = html_to_odoo_html(description_html)
+        else:
+            description_markdown = self._inject_links(parsed.description, parsed.metadata.links)
+            if parsed.dependencies_other or (parsed.dependencies_blocking and not dependency_field):
+                description_markdown = self._append_dependencies(
+                    description_markdown,
+                    parsed.dependencies_blocking if not dependency_field else [],
+                    parsed.dependencies_other,
+                )
+            description = markdown_to_odoo_html(description_markdown)
 
         values = {
             task_fields["name"]: parsed.title,
@@ -189,6 +206,15 @@ class ImportService():
         links_section = "Liens:\n" + "\n".join(f"- {link}" for link in links)
         if description:
             return f"{links_section}\n\n{description}"
+        return links_section
+
+    def _inject_links_html(self, description: str, links: list[str]) -> str:
+        if not links:
+            return description
+        links_items = "".join(f"<li>{escape(link)}</li>" for link in links)
+        links_section = f"<p>Liens:</p><ul>{links_items}</ul>"
+        if description:
+            return f"{links_section}\n{description}"
         return links_section
 
     def _apply_dependencies(
@@ -266,3 +292,28 @@ class ImportService():
             lines.append(f"- {dep}")
         sections.append("\n".join(lines))
         return "\n\n".join(sections)
+
+    @staticmethod
+    def _append_dependencies_html(description: str, blocking: Iterable[str], other: Iterable[str]) -> str:
+        sections = [description] if description else []
+        deps = [*blocking, *other]
+        if deps:
+            items = "".join(f"<li>{escape(dep)}</li>" for dep in deps)
+            sections.append(f"<p>Dependances:</p><ul>{items}</ul>")
+        return "\n".join(sections)
+
+    @staticmethod
+    def _extract_html_description_body(description: str) -> str | None:
+        lines = description.splitlines()
+        index = 0
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+
+        if index < len(lines) and re.match(r"^##\s+description\b", lines[index].strip(), re.I):
+            index += 1
+            while index < len(lines) and not lines[index].strip():
+                index += 1
+
+        if index >= len(lines):
+            return None
+        return "\n".join(lines[index:]).strip()
