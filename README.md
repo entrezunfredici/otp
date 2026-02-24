@@ -13,7 +13,7 @@ python -m venv /otpenv
 Activation de l'environnement virtuel
 
 ```bash
-
+\otpenv\Scripts\Activate.ps1
 ```
 
 ## Installation

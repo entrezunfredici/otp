@@ -385,7 +385,7 @@ def _split_table_row(row: str) -> list[str]:
 
 def _render_unordered_list(lines: list[str], start_index: int) -> tuple[str, int]:
     i = start_index
-    items: list[str] = []
+    items: list[tuple[bool, bool, str]] = []
     while i < len(lines):
         stripped = lines[i].strip()
         if not _is_unordered_item(stripped):
@@ -395,12 +395,7 @@ def _render_unordered_list(lines: list[str], start_index: int) -> tuple[str, int
         if checkbox_match:
             checked = checkbox_match.group(1) in {"x", "X", "✓", "✔", "☑"}
             label = _render_inline_markdown(checkbox_match.group(2).strip())
-            symbol = "☑" if checked else "☐"
-            checked_attr = " checked" if checked else ""
-            checkbox = (
-                f"<label><input type=\"checkbox\" disabled{checked_attr}> {symbol} {label}</label>"
-            )
-            items.append(f"<li>{checkbox}</li>")
+            items.append((True, checked, label))
             i += 1
             continue
 
@@ -408,18 +403,25 @@ def _render_unordered_list(lines: list[str], start_index: int) -> tuple[str, int
         if unicode_checkbox_match:
             checked = unicode_checkbox_match.group(1) in {"☑", "✅"}
             label = _render_inline_markdown(unicode_checkbox_match.group(2).strip())
-            symbol = "☑" if checked else "☐"
-            checked_attr = " checked" if checked else ""
-            checkbox = (
-                f"<label><input type=\"checkbox\" disabled{checked_attr}> {symbol} {label}</label>"
-            )
-            items.append(f"<li>{checkbox}</li>")
+            items.append((True, checked, label))
             i += 1
             continue
 
-        items.append(f"<li>{_render_inline_markdown(content)}</li>")
+        items.append((False, False, _render_inline_markdown(content)))
         i += 1
-    return f"<ul>{''.join(items)}</ul>", i
+
+    if any(is_checkbox for is_checkbox, _, _ in items):
+        rendered_items = []
+        for is_checkbox, checked, label in items:
+            classes = []
+            if is_checkbox and checked:
+                classes.append("o_checked")
+            class_attr = f' class="{" ".join(classes)}"' if classes else ""
+            rendered_items.append(f"<li{class_attr}>{label}</li>")
+        return f'<ul class="o_checklist">{"".join(rendered_items)}</ul>', i
+
+    rendered_items = [f"<li>{label}</li>" for _, _, label in items]
+    return f"<ul>{''.join(rendered_items)}</ul>", i
 
 
 def _render_ordered_list(lines: list[str], start_index: int) -> tuple[str, int]:

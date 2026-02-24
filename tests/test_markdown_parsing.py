@@ -51,9 +51,9 @@ def test_markdown_to_odoo_html_supports_core_blocks() -> None:
 """
     html = markdown_to_odoo_html(markdown)
     assert "<h2>Titre</h2>" in html
-    assert "<input type=\"checkbox\" disabled>" in html
-    assert "<input type=\"checkbox\" disabled checked>" in html
-    assert "<ul>" in html
+    assert "<ul class=\"o_checklist\">" in html
+    assert "<li>Item a faire</li>" in html
+    assert "<li class=\"o_checked\">Item termine</li>" in html
     assert "<ol>" in html
     assert "<table" in html
     assert "<th>Col A</th>" in html
@@ -74,12 +74,11 @@ def test_markdown_to_odoo_html_supports_extended_checkboxes_and_table_separator(
 """
     html = markdown_to_odoo_html(markdown)
 
-    assert "<input type=\"checkbox\" disabled>" in html
-    assert "<input type=\"checkbox\" disabled checked>" in html
-    assert "☐ Item plus" in html
-    assert "☑ Item coche" in html
-    assert "☑ Item unicode coche" in html
-    assert "☐ Item unicode vide" in html
+    assert "<ul class=\"o_checklist\">" in html
+    assert "<li>Item plus</li>" in html
+    assert "<li class=\"o_checked\">Item coche</li>" in html
+    assert "<li class=\"o_checked\">Item unicode coche</li>" in html
+    assert "<li>Item unicode vide</li>" in html
     assert "<table" in html
     assert "<th>Col A</th>" in html
     assert "<td>A1</td>" in html

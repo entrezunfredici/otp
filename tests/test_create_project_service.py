@@ -56,15 +56,19 @@ def test_create_project_allows_existing_when_flag_is_set() -> None:
     assert report.warnings
 
 
-def test_parse_stage_mapping_from_project_template_section() -> None:
+def test_parse_project_plan_from_markdown_sections() -> None:
     template = """
 ## Etapes des taches
-- prod_description_project_task.md: Ressources
-- prod_analyse_besoin_task.md: Backlog
+### Ressources
+- prod_description_project_task.md | 1.0-2.0
+### Backlog
+- prod_analyse_besoin_task.md
 
 ## Specifications
 - ...
 """
-    mapping = CreateProjectService._parse_stage_mapping(template)
-    assert mapping["prod_description_project_task.md"] == "Ressources"
-    assert mapping["prod_analyse_besoin_task.md"] == "Backlog"
+    plan = CreateProjectService._parse_project_plan(template)
+    assert plan.stage_names == ["Ressources", "Backlog"]
+    assert plan.task_stage_by_template["prod_description_project_task.md"] == "Ressources"
+    assert plan.task_stage_by_template["prod_analyse_besoin_task.md"] == "Backlog"
+    assert plan.task_durations_hours["prod_description_project_task.md"] == (1.0, 2.0)

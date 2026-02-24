@@ -1,69 +1,26 @@
 """Service for creating projects in Odoo."""
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-import re
 
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.domain.models import Report
 from odoo_task_porter.services.import_service import ImportOptions, ImportService
 
-DEFAULT_TASK_TEMPLATE_FILES = [
-    "prod_description_project_task.md",
-    "prod_analyse_besoin_task.md",
-    "prod_problematique_task.md",
-    "gov_parties_prenantes_task.md",
-    "prod_moscow_fonctionnalites_task.md",
-    "prod_personas_user_stories_task.md",
-    "prod_decoupage_mvp_versions_task.md",
-    "arch_benchmark_architecture_task.md",
-    "risk_faisabilite_risques_task.md",
-    "research_veille_techno_task.md",
-    "prod_estimation_charge_task.md.md",
-]
-
-DEFAULT_TASK_DURATIONS_HOURS: dict[str, tuple[float, float]] = {
-    "prod_description_project_task.md": (0.5, 1.5),
-    "prod_analyse_besoin_task.md": (3.0, 6.0),
-    "prod_problematique_task.md": (0.75, 2.0),
-    "gov_parties_prenantes_task.md": (1.5, 4.0),
-    "prod_moscow_fonctionnalites_task.md": (1.5, 3.0),
-    "prod_personas_user_stories_task.md": (6.0, 12.0),
-    "prod_decoupage_mvp_versions_task.md": (2.0, 4.0),
-    "arch_benchmark_architecture_task.md": (4.0, 8.0),
-    "risk_faisabilite_risques_task.md": (4.0, 8.0),
-    "research_veille_techno_task.md": (3.0, 6.0),
-    "prod_estimation_charge_task.md.md": (3.0, 6.0),
-}
-
-DEFAULT_STAGE_NAMES = (
-    "templates",
-    "cadrage",
-    "spécification",
-    "en cours",
-    "vérification",
-    "annulé",
-    "demande de modification",
-    "validé",
-    "ressources",
-)
 DEFAULT_PROJECT_TEMPLATE_PATH = Path("templates/project_template.md")
-DEFAULT_TASK_STAGE_BY_TEMPLATE: dict[str, str] = {
-    "prod_description_project_task.md": "cadrage",
-    "prod_analyse_besoin_task.md": "cadrage",
-    "prod_problematique_task.md": "cadrage",
-    "gov_parties_prenantes_task.md": "cadrage",
-    "prod_moscow_fonctionnalites_task.md": "cadrage",
-    "prod_personas_user_stories_task.md": "cadrage",
-    "prod_decoupage_mvp_versions_task.md": "cadrage",
-    "arch_benchmark_architecture_task.md": "cadrage",
-    "risk_faisabilite_risques_task.md": "cadrage",
-    "research_veille_techno_task.md": "cadrage",
-    "prod_estimation_charge_task.md.md": "cadrage",
-}
+
+
+@dataclass
+class ProjectTemplatePlan:
+    stage_names: list[str]
+    task_template_files: list[str]
+    task_stage_by_template: dict[str, str]
+    task_durations_hours: dict[str, tuple[float, float]]
 
 
 class CreateProjectService:
@@ -86,6 +43,7 @@ class CreateProjectService:
             raise ValueError("Le nom du projet est obligatoire.")
 
         report = Report()
+        plan = self._load_project_plan(project_template_file)
         existing_id = self.repo.find_project_id(name)
         if existing_id is not None:
             if not allow_existing:
@@ -97,7 +55,7 @@ class CreateProjectService:
             report.add_item(name, "ok", f"Project '{name}' created.", project_id=project_id)
 
         if with_default_sections:
-            for stage_name in DEFAULT_STAGE_NAMES:
+            for stage_name in plan.stage_names:
                 stage_id = self.repo.get_or_create_stage(project_id, stage_name)
                 report.add_item(
                     stage_name,
@@ -111,7 +69,7 @@ class CreateProjectService:
                 project_name=name,
                 project_id=project_id,
                 templates_source_dir=templates_source_dir,
-                project_template_file=project_template_file,
+                plan=plan,
                 report=report,
             )
 
@@ -122,17 +80,22 @@ class CreateProjectService:
         project_name: str,
         project_id: int,
         templates_source_dir: Path,
-        project_template_file: Path,
+        plan: ProjectTemplatePlan,
         report: Report,
     ) -> None:
         if not templates_source_dir.exists() or not templates_source_dir.is_dir():
             report.add_warning(f"Dossier de templates introuvable: {templates_source_dir}")
             return
+        if not plan.task_template_files:
+            report.add_warning(
+                "Aucune tache par defaut definie dans la section 'Etapes des taches'."
+            )
+            return
 
         with tempfile.TemporaryDirectory() as temp_dir_str:
             temp_dir = Path(temp_dir_str)
             copied_any = False
-            for filename in DEFAULT_TASK_TEMPLATE_FILES:
+            for filename in plan.task_template_files:
                 source = templates_source_dir / filename
                 if not source.exists():
                     report.add_warning(f"Template par defaut absent: {filename}")
@@ -150,9 +113,8 @@ class CreateProjectService:
                 project_name,
                 ImportOptions(create_only=True),
             )
-            stage_mapping = self._load_stage_mapping(project_template_file)
-            self._apply_task_stages(import_report, project_id, stage_mapping, report)
-            self._apply_default_gantt(import_report, report)
+            self._apply_task_stages(import_report, project_id, plan, report)
+            self._apply_default_gantt(import_report, plan, report)
             report.items.extend(import_report.items)
             report.warnings.extend(import_report.warnings)
 
@@ -160,7 +122,7 @@ class CreateProjectService:
         self,
         import_report: Report,
         project_id: int,
-        stage_mapping: dict[str, str],
+        plan: ProjectTemplatePlan,
         report: Report,
     ) -> None:
         stage_field = self.repo.resolve_task_fields()["stage"]
@@ -170,11 +132,11 @@ class CreateProjectService:
             if item.status == "ok" and isinstance(task_id, int):
                 task_by_source[item.source] = task_id
 
-        for filename in DEFAULT_TASK_TEMPLATE_FILES:
+        for filename in plan.task_template_files:
             task_id = task_by_source.get(filename)
             if task_id is None:
                 continue
-            stage_name = stage_mapping.get(filename)
+            stage_name = plan.task_stage_by_template.get(filename)
             if not stage_name:
                 continue
             try:
@@ -192,7 +154,12 @@ class CreateProjectService:
                     f"Etape non appliquee sur {filename} (task_id={task_id}): {exc}"
                 )
 
-    def _apply_default_gantt(self, import_report: Report, report: Report) -> None:
+    def _apply_default_gantt(
+        self,
+        import_report: Report,
+        plan: ProjectTemplatePlan,
+        report: Report,
+    ) -> None:
         (
             start_fields,
             end_fields,
@@ -214,12 +181,12 @@ class CreateProjectService:
 
         cursor = datetime.now().replace(microsecond=0)
         scheduling_errors: list[str] = []
-        for filename in DEFAULT_TASK_TEMPLATE_FILES:
+        for filename in plan.task_template_files:
             task_id = task_by_source.get(filename)
             if task_id is None:
                 scheduling_errors.append(f"{filename}: tache non creee, planification impossible.")
                 continue
-            low, high = DEFAULT_TASK_DURATIONS_HOURS.get(filename, (2.0, 4.0))
+            low, high = plan.task_durations_hours.get(filename, (2.0, 4.0))
             duration_hours = (low + high) / 2.0
             start_at = cursor
             end_at = cursor + timedelta(hours=duration_hours)
@@ -343,35 +310,72 @@ class CreateProjectService:
             return True
         return field_name in {"date_assigning", "date_deadline"}
 
-    def _load_stage_mapping(self, project_template_file: Path) -> dict[str, str]:
-        mapping = dict(DEFAULT_TASK_STAGE_BY_TEMPLATE)
+    def _load_project_plan(self, project_template_file: Path) -> ProjectTemplatePlan:
         if not project_template_file.exists() or not project_template_file.is_file():
-            return mapping
+            return ProjectTemplatePlan([], [], {}, {})
         content = project_template_file.read_text(encoding="utf-8")
-        parsed = self._parse_stage_mapping(content)
-        if parsed:
-            mapping.update(parsed)
-        return mapping
+        return self._parse_project_plan(content)
 
     @staticmethod
-    def _parse_stage_mapping(template_content: str) -> dict[str, str]:
+    def _parse_project_plan(template_content: str) -> ProjectTemplatePlan:
         lines = template_content.splitlines()
-        mapping: dict[str, str] = {}
+        stage_names: list[str] = []
+        task_template_files: list[str] = []
+        task_stage_by_template: dict[str, str] = {}
+        task_durations_hours: dict[str, tuple[float, float]] = {}
         in_section = False
+        current_stage: str | None = None
+
         for raw_line in lines:
             line = raw_line.strip()
-            if line.lower().startswith("## etapes des taches"):
+            normalized = CreateProjectService._normalize_heading(line)
+            if normalized.startswith("## etapes des taches"):
                 in_section = True
                 continue
             if in_section and line.startswith("## "):
                 break
             if not in_section:
                 continue
-            match = re.match(r"^-\s*([^\s:]+\.md(?:\.md)?)\s*:\s*(.+)$", line)
+
+            if line.startswith("### "):
+                current_stage = line[4:].strip()
+                if current_stage and current_stage not in stage_names:
+                    stage_names.append(current_stage)
+                continue
+
+            if not current_stage or not line.startswith("- "):
+                continue
+            match = re.search(r"([A-Za-z0-9_.-]+\.md(?:\.md)?)", line)
             if not match:
                 continue
             filename = match.group(1).strip()
-            stage_name = match.group(2).strip()
-            if filename and stage_name:
-                mapping[filename] = stage_name
-        return mapping
+            if filename not in task_template_files:
+                task_template_files.append(filename)
+            task_stage_by_template[filename] = current_stage
+
+            duration_match = re.search(r"(\d+(?:[.,]\d+)?)\s*[-–]\s*(\d+(?:[.,]\d+)?)", line)
+            if duration_match:
+                low = float(duration_match.group(1).replace(",", "."))
+                high = float(duration_match.group(2).replace(",", "."))
+                if high < low:
+                    low, high = high, low
+                task_durations_hours[filename] = (low, high)
+
+        return ProjectTemplatePlan(
+            stage_names=stage_names,
+            task_template_files=task_template_files,
+            task_stage_by_template=task_stage_by_template,
+            task_durations_hours=task_durations_hours,
+        )
+
+    @staticmethod
+    def _normalize_heading(value: str) -> str:
+        lowered = value.lower()
+        return (
+            lowered.replace("é", "e")
+            .replace("è", "e")
+            .replace("ê", "e")
+            .replace("à", "a")
+            .replace("ù", "u")
+            .replace("ç", "c")
+        )
