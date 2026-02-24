@@ -7,6 +7,7 @@ from pathlib import Path
 
 from odoo_task_porter.cli.base_command import BaseCommand
 from odoo_task_porter.cli.commands import GeneralHelper, build_commands
+from odoo_task_porter.domain.errors import PorterError
 
 
 def build_parser(commands: list[BaseCommand]) -> argparse.ArgumentParser:
@@ -40,7 +41,7 @@ def main() -> int:
 
     try:
         return args._handler(args)
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, PorterError) as exc:
         print(str(exc))
         return 2
 

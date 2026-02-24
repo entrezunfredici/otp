@@ -28,7 +28,9 @@ class OdooClient:
     def authenticate(self) -> int:
         uid = self._common.authenticate(self.db, self.username, self.password, {})
         if not uid:
-            raise OdooError("Authentication failed.")
+            raise OdooError(
+                "Authentication failed. Verifie le profil Odoo (url, db, username, password)."
+            )
         return int(uid)
 
     def _read_server_version(self) -> tuple[str, int | None]:
