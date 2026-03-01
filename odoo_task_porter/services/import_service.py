@@ -79,9 +79,15 @@ class ImportService():
         for path in sorted(tasks_md_dir.glob("*.md")):
             try:
                 parsed = parse_markdown(path)
-                import_key = build_import_key(project_name, parsed.title)
+                task_title, used_fallback_title = self._resolve_task_title(parsed)
+                if used_fallback_title:
+                    report.add_warning(
+                        f"{path.name}: titre generique detecte, titre importe: '{task_title}'."
+                    )
+                import_key = build_import_key(project_name, task_title)
                 values = self._build_values(
                     parsed,
+                    task_title,
                     project_id,
                     import_key,
                     task_fields,
@@ -95,19 +101,19 @@ class ImportService():
                 if import_key_field:
                     existing = self.repo.find_task_by_import_key(project_id, import_key)
                 else:
-                    existing = self.repo.find_task_by_project_and_name(project_id, parsed.title)
+                    existing = self.repo.find_task_by_project_and_name(project_id, task_title)
                 if not existing:
                     action = "create"
 
                 if options.dry_run:
-                    report.add_item(path.name, "dry-run", f"Would {action} task '{parsed.title}'.")
+                    report.add_item(path.name, "dry-run", f"Would {action} task '{task_title}'.")
                     continue
 
                 task_id = self.repo.upsert_task(project_id, values, import_key)
                 imported_tasks.append((parsed, task_id))
                 if parsed.task_code:
                     code_to_task_id[parsed.task_code] = task_id
-                report.add_item(path.name, "ok", f"{action} task '{parsed.title}'.", task_id=task_id)
+                report.add_item(path.name, "ok", f"{action} task '{task_title}'.", task_id=task_id)
             except ValidationError as error:
                 report.add_item(path.name, "error", str(error))
             except Exception as error:  # noqa: BLE001 - capture to continue
@@ -134,6 +140,7 @@ class ImportService():
     def _build_values(
         self,
         parsed: ParsedMarkdown,
+        task_title: str,
         project_id: int,
         import_key: str,
         task_fields: dict[str, str | None],
@@ -167,7 +174,7 @@ class ImportService():
             description = markdown_to_odoo_html(description_markdown)
 
         values = {
-            task_fields["name"]: parsed.title,
+            task_fields["name"]: task_title,
             task_fields["description"]: description,
             task_fields["project"]: project_id,
             task_fields["tags"]: [(6, 0, tag_ids)],
@@ -192,6 +199,36 @@ class ImportService():
             values[deadline_field] = parsed.metadata.deadline.isoformat()
 
         return values
+
+    @staticmethod
+    def _resolve_task_title(parsed: ParsedMarkdown) -> tuple[str, bool]:
+        title = parsed.title.strip()
+        if not ImportService._is_placeholder_title(title):
+            return title, False
+
+        source_slug = ImportService._source_slug(parsed.source_path)
+        if parsed.task_code and source_slug:
+            return f"{parsed.task_code} - {source_slug}", True
+        if parsed.task_code:
+            return f"{parsed.task_code} - task", True
+        if source_slug:
+            return source_slug, True
+        return title, False
+
+    @staticmethod
+    def _is_placeholder_title(title: str) -> bool:
+        normalized = title.strip().lower()
+        return normalized.startswith("[titre]") or normalized.startswith("[title]")
+
+    @staticmethod
+    def _source_slug(source_path: Path) -> str:
+        stem = source_path.stem
+        if "__" in stem:
+            _, slug = stem.split("__", 1)
+        else:
+            slug = stem
+        slug = slug.replace("_", " ").replace("-", " ")
+        return re.sub(r"\s+", " ", slug).strip()
 
     def _tags_for_metadata(self, metadata) -> list[str]:
         tags = [f"{self.tag_mapping.type_prefix}{metadata.task_type}"]
