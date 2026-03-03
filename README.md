@@ -21,7 +21,7 @@ Activation de l'environnement virtuel
 Installation du script
 
 ```bash
-pip install -e .
+py -m pip install git+https://github.com/entrezunfredici/otp.git
 ```
 
 ## Configuration

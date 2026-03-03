@@ -10,5 +10,9 @@ odoo_task_porter.egg-info/dependency_links.txt
 odoo_task_porter.egg-info/entry_points.txt
 odoo_task_porter.egg-info/requires.txt
 odoo_task_porter.egg-info/top_level.txt
+tests/test_create_project_service.py
+tests/test_export_service.py
+tests/test_import_service.py
 tests/test_markdown_parsing.py
+tests/test_project_template_service.py
 tests/test_validation.py
