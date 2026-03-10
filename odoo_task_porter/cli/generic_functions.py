@@ -7,6 +7,7 @@ from pathlib import Path
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.adapters.odoo_client import OdooClient
 from odoo_task_porter.config.settings import AppConfig, load_config
+from odoo_task_porter.config.auth import AuthManager
 
 
 def load_app_config(config_path: Path) -> AppConfig:
@@ -16,8 +17,6 @@ def load_app_config(config_path: Path) -> AppConfig:
 
 def build_repository(profile_name: str) -> OdooRepository:
     """Create an authenticated Odoo repository for a given auth profile."""
-    from odoo_task_porter.config.auth import AuthManager
-
     auth = AuthManager().get(
         profile_name,
     )
