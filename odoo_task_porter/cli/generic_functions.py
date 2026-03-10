@@ -1,12 +1,11 @@
 """Generic CLI composition helpers."""
 from __future__ import annotations
 
-import inquirer
-from rich.progress import BarColumn, DownloadColumn, TextColumn, TransferSpeedColumn, TimeRemainingColumn, SpinnerColumn, TaskProgressColumn
+import inquirer, sys
+from rich.progress import Progress, BarColumn, DownloadColumn, TextColumn, TransferSpeedColumn, TimeRemainingColumn, SpinnerColumn, TaskProgressColumn
 from pathlib import Path
-
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
-from odoo_task_porter.adapters.odoo_xmlrpc import OdooClient
+from odoo_task_porter.adapters.odoo_client import OdooClient
 from odoo_task_porter.config.settings import AppConfig, load_config
 
 
