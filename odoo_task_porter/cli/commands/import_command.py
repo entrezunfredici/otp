@@ -5,7 +5,11 @@ import argparse
 from pathlib import Path
 
 from odoo_task_porter.cli.base_command import BaseCommand, CommandHelper
-from odoo_task_porter.cli.generic_functions import build_repository, load_app_config
+from odoo_task_porter.cli.generic_functions import (
+    build_repository,
+    load_app_config,
+    with_progress_bar,
+)
 from odoo_task_porter.cli.inquirer_helper import can_prompt_interactively, prompt_select, prompt_text
 from odoo_task_porter.cli.reporting import emit_report
 from odoo_task_porter.services.import_service import ImportOptions, ImportService
@@ -30,7 +34,24 @@ class ImportCommand(BaseCommand):
         project = self._resolve_project(args, repo)
         tasks_dir = self._resolve_tasks_dir(args, config.tasks_md_dir)
         options = ImportOptions(dry_run=args.dry_run, create_only=args.create_only)
-        report = ImportService(repo).run(tasks_dir, project, options)
+        service = ImportService(repo)
+        report = None
+        initial_total = max(len(list(tasks_dir.glob("*.md"))), 1)
+
+        def action(progress, task_id):
+            nonlocal report
+
+            def on_progress(done: int, total: int) -> None:
+                normalized_total = max(total, 1)
+                normalized_done = min(max(done, 0), normalized_total)
+                progress.update(task_id, total=normalized_total, completed=normalized_done)
+
+            report = service.run(tasks_dir, project, options, on_progress=on_progress)
+            progress.update(task_id, total=initial_total, completed=initial_total)
+
+        with_progress_bar("Import des taches", initial_total, action)
+        if report is None:
+            raise RuntimeError("Le rapport d'import n'a pas ete genere.")
         emit_report(report, args.report_json)
         return 0
 

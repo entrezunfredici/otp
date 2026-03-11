@@ -11,6 +11,7 @@ Requires-Dist: inquirer
 Requires-Dist: keyring>=24.0
 Requires-Dist: python-dotenv>=1.0
 Requires-Dist: rich>=13.0
+Requires-Dist: odoo-client-lib
 
 # odoo_task_porter
 
@@ -35,7 +36,7 @@ Activation de l'environnement virtuel
 Installation du script
 
 ```bash
-pip install -e .
+pip install git+https://github.com/entrezunfredici/otp.git
 ```
 
 ## Configuration

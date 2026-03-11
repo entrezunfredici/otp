@@ -217,3 +217,20 @@ def test_import_preserves_html_description_without_escaping(tmp_path: Path) -> N
     description = str(repo.upsert_values_by_title["Task HTML"]["description"])
     assert "<p>Bloc <strong>HTML</strong></p>" in description
     assert "&lt;p&gt;" not in description
+
+
+def test_import_reports_progress(tmp_path: Path) -> None:
+    _write_task(tmp_path / "task1.md", "Task 1")
+    _write_task(tmp_path / "task2.md", "Task 2")
+
+    repo = _RepoStub()
+    calls: list[tuple[int, int]] = []
+    report = ImportService(repo).run(
+        tmp_path,
+        "Projet",
+        on_progress=lambda done, total: calls.append((done, total)),
+    )
+
+    assert len(report.items) == 2
+    assert calls[0] == (0, 2)
+    assert calls[-1] == (2, 2)

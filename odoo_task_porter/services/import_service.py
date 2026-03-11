@@ -1,6 +1,7 @@
 """Service for importing tasks from Markdown into Odoo."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
@@ -28,6 +29,9 @@ class ImportOptions:
     create_only: bool = False
 
 
+ProgressCallback = Callable[[int, int], None]
+
+
 class ImportService():
     """Import tasks from Markdown into Odoo."""
 
@@ -35,7 +39,13 @@ class ImportService():
         self.repo = repo
         self.tag_mapping = tag_mapping or TagMapping()
 
-    def run(self, tasks_md_dir: Path, project_name: str, options: ImportOptions | None = None) -> Report:
+    def run(
+        self,
+        tasks_md_dir: Path,
+        project_name: str,
+        options: ImportOptions | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> Report:
         options = options or ImportOptions()
         report = Report()
         version = self.repo.get_server_major_version()
@@ -75,8 +85,12 @@ class ImportService():
         dependency_field = self.repo.supports_dependency_field()
         imported_tasks: list[tuple[ParsedMarkdown, int]] = []
         code_to_task_id: dict[str, int] = {}
+        task_paths = sorted(tasks_md_dir.glob("*.md"))
+        total_tasks = len(task_paths)
+        if on_progress is not None:
+            on_progress(0, total_tasks)
 
-        for path in sorted(tasks_md_dir.glob("*.md")):
+        for index, path in enumerate(task_paths, start=1):
             try:
                 parsed = parse_markdown(path)
                 task_title, used_fallback_title = self._resolve_task_title(parsed)
@@ -118,6 +132,9 @@ class ImportService():
                 report.add_item(path.name, "error", str(error))
             except Exception as error:  # noqa: BLE001 - capture to continue
                 report.add_item(path.name, "error", str(error))
+            finally:
+                if on_progress is not None:
+                    on_progress(index, total_tasks)
 
         if not options.dry_run and dependency_field:
             for parsed, task_id in imported_tasks:

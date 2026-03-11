@@ -32,7 +32,11 @@ def main() -> int:
     commands = build_commands()
     parser = build_parser(commands)
     args = parser.parse_args()
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
+    log_level = getattr(logging, str(args.log_level).upper(), logging.INFO)
+    logging.basicConfig(level=log_level)
+    if log_level > logging.DEBUG:
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     if args.config is None:
         from odoo_task_porter.config.settings import DEFAULT_CONFIG_PATH

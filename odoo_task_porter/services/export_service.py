@@ -1,6 +1,7 @@
 """Service for exporting tasks from Odoo to Markdown."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -23,6 +24,9 @@ class ExportOptions:
     domain: str | None = None
 
 
+ProgressCallback = Callable[[int, int], None]
+
+
 class ExportService:
     """Export tasks from Odoo into Markdown."""
 
@@ -35,6 +39,7 @@ class ExportService:
         project_name: str,
         templates_empty_dir: Path,
         options: ExportOptions | None = None,
+        on_progress: ProgressCallback | None = None,
     ) -> Report:
         options = options or ExportOptions()
         report = Report()
@@ -94,29 +99,36 @@ class ExportService:
         if owner_field is None:
             report.add_warning("Aucun champ d'assignation detecte (user_id/user_ids).")
         tasks = self.repo.find_tasks(domain, fields)
-        for task in tasks:
-            metadata = self._build_metadata(task, task_fields, estimation_field, owner_field)
-            template_path = self._select_template(templates_empty_dir, metadata.task_type)
-            template = load_template(template_path)
-            content = render_markdown(
-                template,
-                str(task[task_fields["name"]]),
-                metadata,
-                self._body_from_description(task, task_fields["description"]),
-            )
-            import_key = (task.get(import_key_field) if import_key_field else None) or str(
-                task[task_fields["id"]]
-            )
-            filename = (
-                f"{metadata.task_type}_{slugify(str(task[task_fields['name']]))}__{import_key}.md"
-            )
-            out_path = export_out_dir / filename
-            out_path.write_text(content, encoding="utf-8")
-            report.add_item(
-                str(out_path),
-                "ok",
-                f"Exported task '{str(task[task_fields['name']])}'.",
-            )
+        total_tasks = len(tasks)
+        if on_progress is not None:
+            on_progress(0, total_tasks)
+        for index, task in enumerate(tasks, start=1):
+            try:
+                metadata = self._build_metadata(task, task_fields, estimation_field, owner_field)
+                template_path = self._select_template(templates_empty_dir, metadata.task_type)
+                template = load_template(template_path)
+                content = render_markdown(
+                    template,
+                    str(task[task_fields["name"]]),
+                    metadata,
+                    self._body_from_description(task, task_fields["description"]),
+                )
+                import_key = (task.get(import_key_field) if import_key_field else None) or str(
+                    task[task_fields["id"]]
+                )
+                filename = (
+                    f"{metadata.task_type}_{slugify(str(task[task_fields['name']]))}__{import_key}.md"
+                )
+                out_path = export_out_dir / filename
+                out_path.write_text(content, encoding="utf-8")
+                report.add_item(
+                    str(out_path),
+                    "ok",
+                    f"Exported task '{str(task[task_fields['name']])}'.",
+                )
+            finally:
+                if on_progress is not None:
+                    on_progress(index, total_tasks)
         return report
 
     def _find_tag_id(self, tag_name: str) -> int | None:

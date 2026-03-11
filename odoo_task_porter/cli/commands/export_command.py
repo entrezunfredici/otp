@@ -5,7 +5,11 @@ import argparse
 from pathlib import Path
 
 from odoo_task_porter.cli.base_command import BaseCommand, CommandHelper
-from odoo_task_porter.cli.generic_functions import build_repository, load_app_config
+from odoo_task_porter.cli.generic_functions import (
+    build_repository,
+    load_app_config,
+    with_progress_bar,
+)
 from odoo_task_porter.cli.inquirer_helper import can_prompt_interactively, prompt_select
 from odoo_task_porter.cli.reporting import emit_report
 from odoo_task_porter.services.export_service import ExportOptions, ExportService
@@ -33,7 +37,33 @@ class ExportCommand(BaseCommand):
         export_dir = args.export_out_dir or config.export_out_dir
         templates_dir = args.templates_empty_dir or config.templates_empty_dir
         options = ExportOptions(stage=args.stage, tag=args.tag, domain=args.domain)
-        report = ExportService(repo).run(export_dir, project, templates_dir, options)
+        service = ExportService(repo)
+        report = None
+        observed_total = 0
+
+        def action(progress, task_id):
+            nonlocal report, observed_total
+
+            def on_progress(done: int, total: int) -> None:
+                nonlocal observed_total
+                observed_total = total
+                normalized_total = max(total, 1)
+                normalized_done = min(max(done, 0), normalized_total)
+                progress.update(task_id, total=normalized_total, completed=normalized_done)
+
+            report = service.run(
+                export_dir,
+                project,
+                templates_dir,
+                options,
+                on_progress=on_progress,
+            )
+            final_total = max(observed_total, 1)
+            progress.update(task_id, total=final_total, completed=final_total)
+
+        with_progress_bar("Export des taches", 1, action)
+        if report is None:
+            raise RuntimeError("Le rapport d'export n'a pas ete genere.")
         emit_report(report, args.report_json)
         return 0
 
