@@ -1,5 +1,8 @@
 from __future__ import annotations
 from types import SimpleNamespace
+import httpx
+from odoolib.rpc import AuthenticationError as OdooAuthenticationError
+from odoolib.tools import JsonRPCException
 import pytest
 from odoo_task_porter.adapters import odoo_client as client_module
 from odoo_task_porter.domain.errors import OdooError
@@ -87,6 +90,30 @@ class _FieldsGetAttributesOnlyModel:
 
 class _ModelWithoutFieldsGet:
     pass
+
+
+class _TimeoutModel:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def search_read(self, *, domain, fields):
+        self.calls += 1
+        raise httpx.ConnectTimeout("timed out")
+
+
+class _AuthFailureModel:
+    def search_read(self, *, domain, fields):
+        raise OdooAuthenticationError("bad credentials")
+
+
+class _JsonRpcFailureModel:
+    def search_read(self, *, domain, fields):
+        raise JsonRPCException(
+            {
+                "message": "Odoo Server Error",
+                "data": {"message": "Access denied by ACL"},
+            }
+        )
 
 
 def test_init_raises_when_odoolib_dependency_is_missing(monkeypatch) -> None:
@@ -183,3 +210,33 @@ def test_init_raises_when_odoolib_connection_fails(monkeypatch) -> None:
 
     with pytest.raises(OdooError, match="Authentication failed"):
         client_module.OdooClient("https://demo.odoo.com", "db", "user", "pwd")
+
+
+def test_search_read_wraps_connect_timeout_with_retry(monkeypatch) -> None:
+    model = _TimeoutModel()
+    fake_lib = _FakeOdooLib(connection=_ConnectionWithModel(model))
+    monkeypatch.setattr(client_module, "odoolib", fake_lib)
+    client = client_module.OdooClient("https://demo.odoo.com", "db", "user", "pwd")
+
+    with pytest.raises(OdooError, match="Connection timed out"):
+        client.search_read("project.task", [], ["name"])
+
+    assert model.calls == 2
+
+
+def test_search_read_wraps_authentication_errors(monkeypatch) -> None:
+    fake_lib = _FakeOdooLib(connection=_ConnectionWithModel(_AuthFailureModel()))
+    monkeypatch.setattr(client_module, "odoolib", fake_lib)
+    client = client_module.OdooClient("https://demo.odoo.com", "db", "user", "pwd")
+
+    with pytest.raises(OdooError, match="Authentication failed"):
+        client.search_read("project.task", [], ["name"])
+
+
+def test_search_read_wraps_jsonrpc_errors(monkeypatch) -> None:
+    fake_lib = _FakeOdooLib(connection=_ConnectionWithModel(_JsonRpcFailureModel()))
+    monkeypatch.setattr(client_module, "odoolib", fake_lib)
+    client = client_module.OdooClient("https://demo.odoo.com", "db", "user", "pwd")
+
+    with pytest.raises(OdooError, match="Access denied by ACL"):
+        client.search_read("project.task", [], ["name"])

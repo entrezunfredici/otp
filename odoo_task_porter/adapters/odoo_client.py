@@ -1,9 +1,13 @@
 """JSON-RPC adapter for Odoo using odoolib."""
 from __future__ import annotations
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
+import httpx
 import odoolib
+from odoolib.rpc import AuthenticationError as OdooAuthenticationError
+from odoolib.tools import JsonRPCException
 from odoo_task_porter.domain.errors import OdooError
 
 
@@ -17,6 +21,7 @@ class OdooClient:
     password: str
     server_version: str = ""
     server_major_version: int | None = None
+    rpc_max_attempts: int = 2
 
     def __post_init__(self) -> None:
         if odoolib is None:
@@ -53,6 +58,54 @@ class OdooClient:
         default_port = 443 if scheme == "https" else 80
         return hostname, protocol, parsed.port or default_port
 
+    def _call_rpc(self, action: Callable[[], Any], operation: str) -> Any:
+        attempts = max(1, self.rpc_max_attempts)
+        for attempt in range(1, attempts + 1):
+            try:
+                return action()
+            except OdooAuthenticationError as exc:
+                raise OdooError(
+                    "Authentication failed. Check Odoo profile (url, db, username, password)."
+                ) from exc
+            except JsonRPCException as exc:
+                raise OdooError(self._format_jsonrpc_error(operation, exc)) from exc
+            except httpx.TimeoutException as exc:
+                if attempt < attempts:
+                    continue
+                raise OdooError(self._format_transport_error(operation, exc)) from exc
+            except httpx.TransportError as exc:
+                if attempt < attempts:
+                    continue
+                raise OdooError(self._format_transport_error(operation, exc)) from exc
+
+        raise RuntimeError("unreachable")
+
+    def _format_transport_error(self, operation: str, exc: Exception) -> str:
+        if isinstance(exc, httpx.ConnectTimeout):
+            prefix = "Connection timed out"
+        elif isinstance(exc, httpx.TimeoutException):
+            prefix = "Request timed out"
+        else:
+            prefix = "Network error"
+        return (
+            f"{prefix} while calling Odoo for {operation} on {self.url}. "
+            "Check VPN/proxy, server availability, and try again."
+        )
+
+    @staticmethod
+    def _format_jsonrpc_error(operation: str, exc: JsonRPCException) -> str:
+        error = getattr(exc, "error", None)
+        message = ""
+        if isinstance(error, dict):
+            data = error.get("data")
+            if isinstance(data, dict):
+                message = str(data.get("message") or data.get("name") or "").strip()
+            if not message:
+                message = str(error.get("message") or "").strip()
+        if not message:
+            message = str(exc).strip()
+        return f"Odoo RPC error during {operation}: {message}"
+
     def _read_server_version(self) -> tuple[str, int | None]:
         info: Any = None
         get_service = getattr(self.client, "get_service", None)
@@ -61,14 +114,14 @@ class OdooClient:
                 common = get_service("common")
                 version_method = getattr(common, "version", None)
                 if callable(version_method):
-                    info = version_method()
+                    info = self._call_rpc(version_method, "common.version")
             except Exception:  # noqa: BLE001
                 info = None
         if not isinstance(info, dict):
             version_method = getattr(self.client, "version", None)
             if callable(version_method):
                 try:
-                    info = version_method()
+                    info = self._call_rpc(version_method, "connection.version")
                 except Exception:  # noqa: BLE001
                     info = None
 
@@ -91,16 +144,23 @@ class OdooClient:
         return self.server_major_version
 
     def search_read(self, model: str, domain: list[Any], fields: list[str]) -> list[dict[str, Any]]:
-        return self.client.get_model(model).search_read(domain=domain, fields=fields)
+        model_proxy = self.client.get_model(model)
+        return self._call_rpc(
+            lambda: model_proxy.search_read(domain=domain, fields=fields),
+            f"{model}.search_read",
+        )
 
     def create(self, model: str, values: dict[str, Any]) -> int:
-        return int(self.client.get_model(model).create(values))
+        model_proxy = self.client.get_model(model)
+        return int(self._call_rpc(lambda: model_proxy.create(values), f"{model}.create"))
 
     def write(self, model: str, ids: list[int], values: dict[str, Any]) -> bool:
-        return bool(self.client.get_model(model).write(ids, values))
+        model_proxy = self.client.get_model(model)
+        return bool(self._call_rpc(lambda: model_proxy.write(ids, values), f"{model}.write"))
 
     def delete(self, model: str, ids: list[int]) -> bool:
-        return bool(self.client.get_model(model).unlink(ids))
+        model_proxy = self.client.get_model(model)
+        return bool(self._call_rpc(lambda: model_proxy.unlink(ids), f"{model}.unlink"))
 
     def fields_get(self, model: str, fields: list[str] | None = None) -> dict[str, Any]:
         model_proxy = self.client.get_model(model)
@@ -121,7 +181,10 @@ class OdooClient:
         result: Any = {}
         for args, kwargs in attempts:
             try:
-                result = getter(*args, **kwargs)
+                result = self._call_rpc(
+                    lambda args=args, kwargs=kwargs: getter(*args, **kwargs),
+                    f"{model}.fields_get",
+                )
                 break
             except TypeError:
                 continue
