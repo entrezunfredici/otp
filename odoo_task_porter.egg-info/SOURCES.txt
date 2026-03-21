@@ -15,5 +15,6 @@ tests/test_export_service.py
 tests/test_import_service.py
 tests/test_markdown_parsing.py
 tests/test_odoo_client.py
+tests/test_odoo_repo.py
 tests/test_project_template_service.py
 tests/test_validation.py
