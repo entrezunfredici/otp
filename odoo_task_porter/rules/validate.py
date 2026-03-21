@@ -9,8 +9,8 @@ from odoo_task_porter.domain.models import TaskMetadata
 from odoo_task_porter.transform.mapping import (
     ALLOWED_MOSCOW,
     ALLOWED_PRIORITIES,
-    ALLOWED_STATUSES,
     ALLOWED_TYPES,
+    is_supported_status,
 )
 
 
@@ -19,7 +19,7 @@ def validate_metadata(metadata: TaskMetadata) -> None:
     errors: list[str] = []
     if metadata.task_type not in ALLOWED_TYPES:
         errors.append(f"Type invalide: {metadata.task_type}")
-    if metadata.status not in ALLOWED_STATUSES:
+    if not is_supported_status(metadata.status):
         errors.append(f"Statut invalide: {metadata.status}")
     if metadata.priority not in ALLOWED_PRIORITIES:
         errors.append(f"Priorité invalide: {metadata.priority}")

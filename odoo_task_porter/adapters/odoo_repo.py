@@ -6,7 +6,8 @@ from typing import Any, Iterable
 
 from odoo_task_porter.adapters.odoo_backend import OdooBackend
 from odoo_task_porter.domain.errors import OdooError
-from odoo_task_porter.transform.mapping import STATUS_TO_STAGE
+from odoo_task_porter.rules.ids import has_task_code, normalize_task_identity
+from odoo_task_porter.transform.mapping import status_to_stage_name
 from odoo_task_porter.versions import resolve_version_spec
 from odoo_task_porter.versions.spec import OdooVersionSpec
 
@@ -45,6 +46,7 @@ class OdooRepository:
             "import_key": resolved_aliases.get("import_key"),
             "estimation_hours": resolved_aliases.get("planned_hours"),
             "owner": resolved_aliases.get("owner"),
+            "parent": resolved_aliases.get("parent"),
         }
 
     def resolve_task_field_aliases(self) -> dict[str, str | None]:
@@ -180,18 +182,117 @@ class OdooRepository:
         )
         return results[0] if results else None
 
-    def upsert_task(self, project_id: int, values: dict[str, Any], import_key: str) -> int:
+    def find_task_by_id(self, project_id: int, task_id: int) -> dict[str, Any] | None:
         spec = self.get_version_spec()
         task_fields = self.resolve_task_fields()
+        results = self.client.search_read(
+            spec.models.task,
+            [
+                [task_fields["id"], "=", task_id],
+                [task_fields["project"], "=", project_id],
+            ],
+            [task_fields["id"], task_fields["name"]],
+        )
+        return results[0] if results else None
+
+    def find_task_by_project_and_code(self, project_id: int, task_code: str) -> dict[str, Any] | None:
+        spec = self.get_version_spec()
+        task_fields = self.resolve_task_fields()
+        results = self.client.search_read(
+            spec.models.task,
+            [
+                [task_fields["project"], "=", project_id],
+                [task_fields["name"], "ilike", task_code],
+            ],
+            [task_fields["id"], task_fields["name"]],
+        )
+        for record in results:
+            task_name = str(record.get(task_fields["name"]) or "")
+            if has_task_code(task_name, task_code):
+                return record
+        return None
+
+    def find_task_by_project_and_similar_name(
+        self,
+        project_id: int,
+        task_name: str,
+    ) -> dict[str, Any] | None:
+        spec = self.get_version_spec()
+        task_fields = self.resolve_task_fields()
+        target_name = normalize_task_identity(task_name)
+        if not target_name:
+            return None
+        results = self.client.search_read(
+            spec.models.task,
+            [[task_fields["project"], "=", project_id]],
+            [task_fields["id"], task_fields["name"]],
+        )
+        exact_matches: list[dict[str, Any]] = []
+        prefix_matches: list[dict[str, Any]] = []
+        for record in results:
+            candidate_name = normalize_task_identity(str(record.get(task_fields["name"]) or ""))
+            if not candidate_name:
+                continue
+            if candidate_name == target_name:
+                exact_matches.append(record)
+                continue
+            if candidate_name.startswith(target_name) or target_name.startswith(candidate_name):
+                prefix_matches.append(record)
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+        if not exact_matches and len(prefix_matches) == 1:
+            return prefix_matches[0]
+        return None
+
+    def find_existing_task(
+        self,
+        project_id: int,
+        import_key: str,
+        task_name: str | None = None,
+        task_code: str | None = None,
+        source_task_id: int | None = None,
+        source_import_key: str | None = None,
+    ) -> dict[str, Any] | None:
+        task_fields = self.resolve_task_fields()
         existing = None
-        if task_fields["import_key"]:
+        if source_task_id is not None:
+            existing = self.find_task_by_id(project_id, source_task_id)
+        if existing is None and task_fields["import_key"] and source_import_key:
+            existing = self.find_task_by_import_key(project_id, source_import_key)
+        if existing is None and task_fields["import_key"]:
             existing = self.find_task_by_import_key(project_id, import_key)
-        else:
-            task_name = values.get(task_fields["name"])
-            if isinstance(task_name, str) and task_name.strip():
-                existing = self.find_task_by_project_and_name(project_id, task_name)
+        if existing is None and task_code:
+            existing = self.find_task_by_project_and_code(project_id, task_code)
+        if existing is None and task_name and task_name.strip():
+            existing = self.find_task_by_project_and_name(project_id, task_name)
+        if existing is None and task_name and task_name.strip():
+            existing = self.find_task_by_project_and_similar_name(project_id, task_name)
+        return existing
+
+    def upsert_task(
+        self,
+        project_id: int,
+        values: dict[str, Any],
+        import_key: str,
+        task_code: str | None = None,
+        source_task_id: int | None = None,
+        source_import_key: str | None = None,
+    ) -> int:
+        spec = self.get_version_spec()
+        task_fields = self.resolve_task_fields()
+        task_name = values.get(task_fields["name"])
+        existing = self.find_existing_task(
+            project_id,
+            import_key,
+            task_name=task_name if isinstance(task_name, str) else None,
+            task_code=task_code,
+            source_task_id=source_task_id,
+            source_import_key=source_import_key,
+        )
         if existing:
-            self.client.write(spec.models.task, [int(existing[task_fields["id"]])], values)
+            success = self.client.write(spec.models.task, [int(existing[task_fields["id"]])], values)
+            if not success:
+                raise OdooError(f"Echec de mise a jour de la tache {int(existing[task_fields['id']])}.")
             return int(existing[task_fields["id"]])
         return self.client.create(spec.models.task, values)
 
@@ -226,7 +327,7 @@ class OdooRepository:
         stage_projects_field = self._require_alias(
             stage_fields, "projects_relation", spec.models.stage
         )
-        stage_name = STATUS_TO_STAGE.get(status, status)
+        stage_name = status_to_stage_name(status)
         results = self.client.search_read(
             spec.models.stage,
             [
@@ -316,6 +417,12 @@ class OdooRepository:
             return
         spec = self.get_version_spec()
         self.client.write(spec.models.task, [task_id], {field_name: [(6, 0, dependency_ids)]})
+
+    def set_parent(self, task_id: int, parent_id: int, field_name: str) -> None:
+        if task_id == parent_id:
+            return
+        spec = self.get_version_spec()
+        self.client.write(spec.models.task, [task_id], {field_name: parent_id})
 
     def _resolve_model_field_aliases(
         self,

@@ -156,3 +156,76 @@ def test_parse_markdown_extracts_task_code_from_metadata_id(tmp_path: Path) -> N
     parsed = parse_markdown(path)
 
     assert parsed.task_code == "D-102"
+
+
+def test_parse_markdown_extracts_dotted_task_code_from_title(tmp_path: Path) -> None:
+    content = """# M-01.1 — API Projects CRUD
+
+## Metadonnees
+- Type: dev
+- Statut: todo
+- Priorite: P1
+- MoSCoW: Must
+- Estimation: S
+- Owner: @alice
+"""
+    path = tmp_path / "task_code_dotted.md"
+    path.write_text(content, encoding="utf-8")
+
+    parsed = parse_markdown(path)
+
+    assert parsed.task_code == "M-01.1"
+
+
+def test_parse_markdown_accepts_custom_odoo_stage_name(tmp_path: Path) -> None:
+    content = """# M-01.2 - API Spaces CRUD
+
+## Metadonnees
+- Type: dev
+- Statut: spécification
+- Priorite: P1
+- MoSCoW: Must
+- Estimation: S
+- Owner: @alice
+"""
+    path = tmp_path / "custom_stage.md"
+    path.write_text(content, encoding="utf-8")
+
+    parsed = parse_markdown(path)
+
+    assert parsed.metadata.status == "spécification"
+
+def test_parse_markdown_accepts_aide_task_type(tmp_path: Path) -> None:
+    content = """# AIDE-ERROR-001 - Error management
+
+## Metadonnees
+- Type: aide
+- Statut: todo
+- Priorite: P1
+- MoSCoW: Must
+- Estimation: S
+"""
+    path = tmp_path / "aide_task.md"
+    path.write_text(content, encoding="utf-8")
+
+    parsed = parse_markdown(path)
+
+    assert parsed.metadata.task_type == "aide"
+
+
+def test_parse_markdown_normalizes_moscow_with_annotation(tmp_path: Path) -> None:
+    content = """# M-02.5 - Parsing contenu
+
+## Metadonnees
+- Type: dev
+- Statut: todo
+- Priorite: P1
+- MoSCoW: Must *(a challenger)*
+- Estimation: S
+"""
+    path = tmp_path / "moscow_annotation.md"
+    path.write_text(content, encoding="utf-8")
+
+    parsed = parse_markdown(path)
+
+    assert parsed.metadata.moscow == "Must"

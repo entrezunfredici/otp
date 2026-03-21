@@ -2,6 +2,10 @@
 
 Prototype v1 pour importer et exporter des taches Odoo 19 via XML-RPC et des fichiers Markdown.
 
+## Documentation
+
+- [Error management](./error-management.md) : convention des codes HTTP, format JSON d'erreur, regles front/back et alignement Swagger/OpenAPI.
+
 ## Gestion d'un environnement virtuel
 
 Creation de l'environnement virtuel

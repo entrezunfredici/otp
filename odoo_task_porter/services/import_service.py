@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from html import escape
 from pathlib import Path
 import re
@@ -15,9 +16,9 @@ from odoo_task_porter.adapters.markdown import (
     parse_markdown,
 )
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
-from odoo_task_porter.domain.errors import ValidationError
+from odoo_task_porter.domain.errors import OdooError, ValidationError
 from odoo_task_porter.domain.models import ParsedMarkdown, Report
-from odoo_task_porter.rules.ids import build_import_key
+from odoo_task_porter.rules.ids import build_import_key, extract_task_code
 from odoo_task_porter.transform.mapping import TagMapping, estimation_to_hours
 
 
@@ -75,6 +76,7 @@ class ImportService():
         estimation_field = task_fields["estimation_hours"]
         deadline_field = task_fields["deadline"]
         owner_field = task_fields["owner"]
+        parent_field = task_fields.get("parent")
         if estimation_field is None:
             report.add_warning(
                 "Aucun champ d'estimation supporte detecte (planned_hours/allocated_hours)."
@@ -85,7 +87,7 @@ class ImportService():
         dependency_field = self.repo.supports_dependency_field()
         imported_tasks: list[tuple[ParsedMarkdown, int]] = []
         code_to_task_id: dict[str, int] = {}
-        task_paths = sorted(tasks_md_dir.glob("*.md"))
+        task_paths = self._collect_task_paths(tasks_md_dir, report)
         total_tasks = len(task_paths)
         if on_progress is not None:
             on_progress(0, total_tasks)
@@ -94,11 +96,12 @@ class ImportService():
             try:
                 parsed = parse_markdown(path)
                 task_title, used_fallback_title = self._resolve_task_title(parsed)
+                source_task_id, source_import_key = self._extract_source_identity(path)
                 if used_fallback_title:
                     report.add_warning(
                         f"{path.name}: titre generique detecte, titre importe: '{task_title}'."
                     )
-                import_key = build_import_key(project_name, task_title)
+                import_key = build_import_key(project_name, task_title, parsed.task_code)
                 values = self._build_values(
                     parsed,
                     task_title,
@@ -112,10 +115,14 @@ class ImportService():
                 )
 
                 action = "update"
-                if import_key_field:
-                    existing = self.repo.find_task_by_import_key(project_id, import_key)
-                else:
-                    existing = self.repo.find_task_by_project_and_name(project_id, task_title)
+                existing = self.repo.find_existing_task(
+                    project_id,
+                    import_key,
+                    task_name=task_title,
+                    task_code=parsed.task_code,
+                    source_task_id=source_task_id,
+                    source_import_key=source_import_key,
+                )
                 if not existing:
                     action = "create"
 
@@ -123,7 +130,29 @@ class ImportService():
                     report.add_item(path.name, "dry-run", f"Would {action} task '{task_title}'.")
                     continue
 
-                task_id = self.repo.upsert_task(project_id, values, import_key)
+                try:
+                    task_id = self.repo.upsert_task(
+                        project_id,
+                        values,
+                        import_key,
+                        task_code=parsed.task_code,
+                        source_task_id=source_task_id,
+                        source_import_key=source_import_key,
+                    )
+                except OdooError as error:
+                    if not (
+                        existing
+                        and self._is_schedule_constraint_error(error)
+                        and self._retry_update_with_schedule_fix(
+                            int(existing[task_fields["id"]]),
+                            values,
+                        )
+                    ):
+                        raise
+                    task_id = int(existing[task_fields["id"]])
+                    report.add_warning(
+                        f"{path.name}: planning Odoo incoherent detecte, dates reinitialisees pour permettre la mise a jour."
+                    )
                 imported_tasks.append((parsed, task_id))
                 if parsed.task_code:
                     code_to_task_id[parsed.task_code] = task_id
@@ -136,21 +165,39 @@ class ImportService():
                 if on_progress is not None:
                     on_progress(index, total_tasks)
 
-        if not options.dry_run and dependency_field:
-            for parsed, task_id in imported_tasks:
-                if not parsed.dependencies_blocking:
-                    continue
-                self._apply_dependencies(
-                    dependencies=parsed.dependencies_blocking,
-                    field_name=dependency_field,
-                    task_id=task_id,
-                    report=report,
-                    task_name_field=task_fields["name"],
-                    task_project_field=task_fields["project"],
-                    project_id=project_id,
-                    code_to_task_id=code_to_task_id,
-                    source_name=parsed.source_path.name,
+        if not options.dry_run:
+            if parent_field:
+                for parsed, task_id in imported_tasks:
+                    self._apply_parent_link(
+                        task_code=parsed.task_code,
+                        field_name=parent_field,
+                        task_id=task_id,
+                        report=report,
+                        task_id_field=task_fields["id"],
+                        project_id=project_id,
+                        code_to_task_id=code_to_task_id,
+                        source_name=parsed.source_path.name,
+                    )
+            elif any(self._extract_parent_task_code(parsed.task_code) for parsed, _ in imported_tasks):
+                report.add_warning(
+                    "Relations parent/enfant non appliquees: champ parent indisponible dans Odoo."
                 )
+
+            if dependency_field:
+                for parsed, task_id in imported_tasks:
+                    if not parsed.dependencies_blocking:
+                        continue
+                    self._apply_dependencies(
+                        dependencies=parsed.dependencies_blocking,
+                        field_name=dependency_field,
+                        task_id=task_id,
+                        report=report,
+                        task_name_field=task_fields["name"],
+                        task_project_field=task_fields["project"],
+                        project_id=project_id,
+                        code_to_task_id=code_to_task_id,
+                        source_name=parsed.source_path.name,
+                    )
 
         return report
 
@@ -247,6 +294,92 @@ class ImportService():
         slug = slug.replace("_", " ").replace("-", " ")
         return re.sub(r"\s+", " ", slug).strip()
 
+    @staticmethod
+    def _extract_source_identity(source_path: Path) -> tuple[int | None, str | None]:
+        stem = source_path.stem
+        if "__" not in stem:
+            return None, None
+        _, suffix = stem.rsplit("__", 1)
+        suffix = suffix.strip()
+        if not suffix:
+            return None, None
+        if suffix.isdigit():
+            return int(suffix), None
+        return None, suffix
+
+    @staticmethod
+    def _collect_task_paths(tasks_md_dir: Path, report: Report) -> list[Path]:
+        task_paths: list[Path] = []
+        for path in sorted(tasks_md_dir.glob("*.md")):
+            if path.name.lower().startswith("readme"):
+                report.add_warning(f"{path.name}: fichier ignore (README non importable comme tache).")
+                continue
+            task_paths.append(path)
+        return task_paths
+
+    @staticmethod
+    def _is_schedule_constraint_error(error: Exception) -> bool:
+        message = str(error).lower()
+        return "planned start date" in message and "planned end date" in message
+
+    def _retry_update_with_schedule_fix(self, task_id: int, values: dict) -> bool:
+        start_fields, end_fields, deadline_field, field_types = self._resolve_schedule_fields()
+        if not start_fields or not end_fields:
+            return False
+
+        start_at = datetime.now().replace(microsecond=0)
+        retry_offsets = (timedelta(days=2), timedelta(days=7))
+        for offset in retry_offsets:
+            end_at = start_at + offset
+            retry_values = dict(values)
+            for start_field in start_fields:
+                retry_values[start_field] = self._format_schedule_value(
+                    start_field,
+                    start_at,
+                    field_types.get(start_field),
+                )
+            for end_field in end_fields:
+                retry_values[end_field] = self._format_schedule_value(
+                    end_field,
+                    end_at,
+                    field_types.get(end_field),
+                )
+            if deadline_field and deadline_field not in retry_values:
+                retry_values[deadline_field] = end_at.date().isoformat()
+            try:
+                self.repo.update_task(task_id, retry_values)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _resolve_schedule_fields(self) -> tuple[list[str], list[str], str | None, dict[str, str]]:
+        spec = self.repo.get_version_spec()
+        all_fields = self.repo.fields(spec.models.task, [])
+        available = set(all_fields.keys())
+
+        def pick_all(candidates: list[str]) -> list[str]:
+            return [name for name in candidates if name in available]
+
+        start_fields = pick_all(["date_start", "planned_date_begin", "date_assigning"])
+        end_fields = pick_all(["date_end", "planned_date_end"])
+        deadline_candidates = pick_all(["date_deadline"])
+        deadline_field = deadline_candidates[0] if deadline_candidates else None
+        field_types: dict[str, str] = {}
+        for field_name in [*start_fields, *end_fields, deadline_field]:
+            if field_name:
+                metadata = all_fields.get(field_name) or {}
+                field_type = str(metadata.get("type") or "").strip()
+                if field_type:
+                    field_types[field_name] = field_type
+        return start_fields, end_fields, deadline_field, field_types
+
+    @staticmethod
+    def _format_schedule_value(field_name: str, value: datetime, field_type: str | None = None) -> str:
+        if field_type == "date" or field_name in {"date_assigning", "date_deadline"}:
+            return value.date().isoformat()
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+
     def _tags_for_metadata(self, metadata) -> list[str]:
         tags = [f"{self.tag_mapping.type_prefix}{metadata.task_type}"]
         tags.append(f"{self.tag_mapping.priority_prefix}{metadata.priority}")
@@ -329,12 +462,37 @@ class ImportService():
 
     @staticmethod
     def _extract_dependency_code(content: str) -> str | None:
-        match = re.search(r"^\s*\((?:Bloquante|Non-bloquante)\)\s*([A-Za-z]+-\d+)\b", content)
-        if not match:
-            match = re.search(r"\b([A-Za-z]+-\d+)\b", content)
-        if match:
-            return match.group(1).upper()
-        return None
+        return extract_task_code(content)
+
+    def _apply_parent_link(
+        self,
+        task_code: str | None,
+        field_name: str,
+        task_id: int,
+        report: Report,
+        task_id_field: str,
+        project_id: int,
+        code_to_task_id: dict[str, int],
+        source_name: str,
+    ) -> None:
+        parent_code = self._extract_parent_task_code(task_code)
+        if not parent_code:
+            return
+
+        parent_task_id = code_to_task_id.get(parent_code)
+        if parent_task_id is None:
+            parent_record = self.repo.find_task_by_project_and_code(project_id, parent_code)
+            if parent_record is not None:
+                parent_task_id = int(parent_record[task_id_field])
+
+        if parent_task_id is None:
+            report.add_warning(
+                f"{source_name}: tache parente introuvable pour {task_code} "
+                f"(parent attendu: {parent_code})."
+            )
+            return
+
+        self.repo.set_parent(task_id, parent_task_id, field_name)
 
     @staticmethod
     def _append_dependencies(description: str, blocking: Iterable[str], other: Iterable[str]) -> str:
@@ -371,3 +529,10 @@ class ImportService():
         if index >= len(lines):
             return None
         return "\n".join(lines[index:]).strip()
+
+    @staticmethod
+    def _extract_parent_task_code(task_code: str | None) -> str | None:
+        if not task_code or "." not in task_code:
+            return None
+        parent_code, _, _ = task_code.rpartition(".")
+        return parent_code or None

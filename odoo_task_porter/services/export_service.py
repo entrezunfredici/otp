@@ -12,7 +12,7 @@ from odoo_task_porter.adapters.markdown import load_template, render_markdown
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.domain.models import Report, TaskMetadata
 from odoo_task_porter.rules.normalize import slugify
-from odoo_task_porter.transform.mapping import STAGE_TO_STATUS, hours_to_estimation
+from odoo_task_porter.transform.mapping import hours_to_estimation, stage_name_to_status
 
 
 @dataclass
@@ -146,7 +146,8 @@ class ExportService:
         priority = self._extract_tag_value(tag_names, "priority_") or "P2"
         moscow_raw = self._extract_tag_value(tag_names, "moscow_") or "must"
         moscow = self._normalize_moscow(moscow_raw)
-        status = STAGE_TO_STATUS.get(task.get(task_fields["stage"], [None, ""])[1], "todo")
+        stage_name = str(task.get(task_fields["stage"], [None, ""])[1] or "")
+        status = stage_name_to_status(stage_name)
         estimation_hours = task.get(estimation_field) if estimation_field else None
         estimation = hours_to_estimation(estimation_hours)
         owner = self._format_owner(task, owner_field)

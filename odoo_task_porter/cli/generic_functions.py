@@ -2,7 +2,17 @@
 from __future__ import annotations
 
 import inquirer, sys
-from rich.progress import Progress, BarColumn, DownloadColumn, TextColumn, TransferSpeedColumn, TimeRemainingColumn, SpinnerColumn, TaskProgressColumn
+from rich.progress import (
+    Progress,
+    BarColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    SpinnerColumn,
+    TaskProgressColumn,
+    ProgressColumn,
+    Task,
+)
+from rich.text import Text
 from pathlib import Path
 from odoo_task_porter.adapters.odoo_repo import OdooRepository
 from odoo_task_porter.adapters.odoo_client import OdooClient
@@ -45,14 +55,24 @@ def inquirer_question(field_name: str, metadata: dict[str], default_value: any=N
             sys.exit(1)
     return inquirer.prompt(questions, theme=inquirer_theme)[field_name]
 
+
+class FilesSpeedColumn(ProgressColumn):
+    """Render task speed using files per second."""
+
+    def render(self, task: Task) -> Text:
+        speed = task.finished_speed or task.speed
+        if speed is None:
+            return Text("- files/s")
+        return Text(f"{speed:.1f} files/s")
+
 def with_progress_bar(tag: str, total: int, action):
     with Progress(
         TextColumn("   ║║"),
         SpinnerColumn(style="bold orange1"),
         TextColumn("{task.description}"),
         BarColumn(bar_width=50, complete_style="orange1", finished_style="bold green", pulse_style="dim"),
-        DownloadColumn(),
-        TransferSpeedColumn(),
+        TextColumn("{task.completed:.0f}/{task.total:.0f} files"),
+        FilesSpeedColumn(),
         TimeRemainingColumn(),
         TaskProgressColumn(),
     ) as progress:

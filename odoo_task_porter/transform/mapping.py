@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
-ALLOWED_TYPES = {"dev", "ux-ui", "devops", "infra", "qa", "sec", "doc", "produit", "research"}
+ALLOWED_TYPES = {"dev", "ux-ui", "devops", "infra", "qa", "sec", "doc", "produit", "research", "aide"}
 ALLOWED_STATUSES = {"backlog", "todo", "in_progress", "review", "blocked", "done"}
 ALLOWED_PRIORITIES = {"P0", "P1", "P2", "P3"}
 ALLOWED_MOSCOW = {"Must", "Should", "Could", "Won't", "Won’t", "Wonâ€™t", "Wont"}
@@ -36,6 +36,27 @@ class TagMapping:
     type_prefix: str = "type_"
     priority_prefix: str = "priority_"
     moscow_prefix: str = "moscow_"
+
+
+def stage_name_to_status(value: str) -> str:
+    """Convert a known Odoo stage label to a canonical status, else preserve it."""
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    return STAGE_TO_STATUS.get(normalized, normalized)
+
+
+def status_to_stage_name(value: str) -> str:
+    """Convert a canonical status to an Odoo stage label, else preserve it."""
+    normalized = value.strip()
+    if not normalized:
+        return ""
+    return STATUS_TO_STAGE.get(normalized, normalized)
+
+
+def is_supported_status(value: str) -> bool:
+    """Allow canonical statuses and custom Odoo stage names."""
+    return bool(value.strip())
 
 
 def estimation_to_hours(value: str, mapping: Dict[str, int] | None = None) -> float | None:

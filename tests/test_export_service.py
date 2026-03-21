@@ -62,6 +62,19 @@ class _RepoStub:
         return []
 
 
+class _CustomStageRepoStub(_RepoStub):
+    def find_tasks(self, domain: list, fields: list[str]) -> list[dict]:
+        return [
+            {
+                "id": 12,
+                "name": "Task Spec",
+                "description": "Description Spec",
+                "tag_ids": [],
+                "stage_id": [3, "spécification"],
+            }
+        ]
+
+
 def test_export_reports_progress(tmp_path: Path) -> None:
     templates_dir = tmp_path / "templates"
     templates_dir.mkdir(parents=True, exist_ok=True)
@@ -100,3 +113,42 @@ def test_export_reports_progress(tmp_path: Path) -> None:
     assert len(report.items) == 2
     assert calls[0] == (0, 2)
     assert calls[-1] == (2, 2)
+
+
+def test_export_preserves_custom_stage_name_in_metadata(tmp_path: Path) -> None:
+    templates_dir = tmp_path / "templates"
+    templates_dir.mkdir(parents=True, exist_ok=True)
+    (templates_dir / "dev.md").write_text(
+        "\n".join(
+            [
+                "# {{TITLE}}",
+                "",
+                "## Metadonnees",
+                "- Type: {{TYPE}}",
+                "- Statut: {{STATUT}}",
+                "- Priorite: {{PRIORITE}}",
+                "- MoSCoW: {{MOSCOW}}",
+                "- Estimation: {{ESTIMATION}}",
+                "- Owner: {{OWNER}}",
+                "- Deadline: {{DEADLINE}}",
+                "- Liens: {{LIENS}}",
+                "",
+                "## Description",
+                "{{DESCRIPTION}}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "out"
+
+    ExportService(_CustomStageRepoStub()).run(
+        out_dir,
+        "Projet",
+        templates_dir,
+    )
+
+    exported_files = list(out_dir.glob("*.md"))
+    assert len(exported_files) == 1
+    content = exported_files[0].read_text(encoding="utf-8")
+    assert "- Statut: spécification" in content

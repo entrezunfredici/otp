@@ -10,6 +10,7 @@ from typing import Iterable
 
 from odoo_task_porter.domain.errors import ValidationError
 from odoo_task_porter.domain.models import ParsedMarkdown, TaskMetadata
+from odoo_task_porter.rules.ids import extract_task_code
 from odoo_task_porter.rules.validate import require_fields, validate_metadata
 
 META_SECTION_HEADERS = {
@@ -297,11 +298,7 @@ def _parse_dependencies(lines: Iterable[str]) -> tuple[list[str], list[str]]:
 
 
 def _extract_task_code(metadata_id: str | None, title: str) -> str | None:
-    for source in (metadata_id or "", title):
-        match = re.search(r"\b([A-Za-z]+-\d+)\b", source)
-        if match:
-            return match.group(1).upper()
-    return None
+    return extract_task_code(metadata_id, title)
 
 
 def _sanitize_metadata_value(field: str, value: str) -> str:
@@ -318,7 +315,22 @@ def _sanitize_metadata_value(field: str, value: str) -> str:
     if field == "liens" and value.startswith("(") and value.endswith(")"):
         return ""
     if field == "moscow":
-        value = value.replace("Won''t", "Won't").replace("Won\u00c3\u0192\u00c2\u00a2\u00c3\u00a2\u20ac\u0161\u00c2\u00ac\u00c3\u00a2\u20ac\u017e\u00c2\u00a2t", "Won't")
+        cleaned = re.sub(r"[*_`]", "", value).strip()
+        cleaned = cleaned.replace("Won''t", "Won't").replace(
+            "Won\u00c3\u0192\u00c2\u00a2\u00c3\u00a2\u20ac\u0161\u00c2\u00ac\u00c3\u00a2\u20ac\u017e\u00c2\u00a2t",
+            "Won't",
+        )
+        match = re.match(r"^(Must|Should|Could|Won't|Won’t|Wont)\b", cleaned, re.I)
+        if match:
+            token = match.group(1).casefold().replace("’", "'")
+            return {
+                "must": "Must",
+                "should": "Should",
+                "could": "Could",
+                "won't": "Won't",
+                "wont": "Wont",
+            }.get(token, cleaned)
+        value = cleaned
     return value
 
 
